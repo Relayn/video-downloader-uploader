@@ -1,0 +1,30 @@
+# IDE and Python
+.idea/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment and credentials
+.env
+credentials.json
+
+# Project output/temp
+src/temp/
+temp/
+
+# Logs
+*.log
+
+# User docs
+PLANNING.md
+README.md
+Task.md
+
+# Misc
+*.iml
