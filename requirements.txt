@@ -1,0 +1,8 @@
+yt-dlp
+yadisk
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2
+python-slugify
+python-dotenv
+PySide6
