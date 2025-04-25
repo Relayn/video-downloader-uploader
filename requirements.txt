@@ -6,3 +6,6 @@ google-auth-httplib2
 python-slugify
 python-dotenv
 PySide6
+pytest
+pytest-qt
+requests

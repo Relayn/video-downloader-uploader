@@ -5,9 +5,9 @@ import yadisk
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from auth import get_yandex_token, get_google_drive_credentials
-from logger import setup_logger
-from config import LOG_LEVEL, LOG_TO_FILE, LOG_FILE_PATH
+from src.auth import get_yandex_token, get_google_drive_credentials
+from src.logger import setup_logger
+from src.config import LOG_LEVEL, LOG_TO_FILE, LOG_FILE_PATH
 
 logger = setup_logger("uploader", level=LOG_LEVEL, to_file=LOG_TO_FILE, file_path=LOG_FILE_PATH)
 

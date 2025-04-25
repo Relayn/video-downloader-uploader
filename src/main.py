@@ -5,10 +5,10 @@ import time
 from typing import Dict, Any, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
-from downloader import download_video
-from uploader import upload_to_yandex_disk, upload_to_google_drive
-from logger import setup_logger
-from config import LOG_LEVEL, LOG_TO_FILE, LOG_FILE_PATH, TEMP_DIR_PREFIX
+from src.downloader import download_video
+from src.uploader import upload_to_yandex_disk, upload_to_google_drive
+from src.logger import setup_logger
+from src.config import LOG_LEVEL, LOG_TO_FILE, LOG_FILE_PATH, TEMP_DIR_PREFIX
 
 logger = setup_logger("main", level=LOG_LEVEL, to_file=LOG_TO_FILE, file_path=LOG_FILE_PATH)
 

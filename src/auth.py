@@ -3,8 +3,8 @@ import os
 import time
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
-from logger import setup_logger
-from config import LOG_LEVEL, LOG_TO_FILE, LOG_FILE_PATH, GOOGLE_CREDENTIALS
+from src.logger import setup_logger
+from src.config import LOG_LEVEL, LOG_TO_FILE, LOG_FILE_PATH, GOOGLE_CREDENTIALS
 
 logger = setup_logger("auth", level=LOG_LEVEL, to_file=LOG_TO_FILE, file_path=LOG_FILE_PATH)
 

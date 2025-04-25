@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from typing import Optional
-from logger import setup_logger
+from src.logger import setup_logger
 
 logger = setup_logger("config", level=os.getenv("LOG_LEVEL", "INFO"), to_file=os.getenv("LOG_TO_FILE", "False").lower() in ("1", "true", "yes"), file_path=os.getenv("LOG_FILE_PATH", "app.log"))
 

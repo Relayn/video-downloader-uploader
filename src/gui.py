@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject, QEvent
 import sys
-from settings_dialog import SettingsDialog
+from src.settings_dialog import SettingsDialog
 
 # --- Асинхронные задачи ---
 class WorkerSignals(QObject):

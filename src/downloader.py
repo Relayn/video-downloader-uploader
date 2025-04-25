@@ -4,8 +4,8 @@ from typing import Tuple, Optional, List, Dict, Any
 import yt_dlp
 from slugify import slugify
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from logger import setup_logger
-from config import LOG_LEVEL, LOG_TO_FILE, LOG_FILE_PATH, YTDLP_FORMAT, YTDLP_RETRIES
+from src.logger import setup_logger
+from src.config import LOG_LEVEL, LOG_TO_FILE, LOG_FILE_PATH, YTDLP_FORMAT, YTDLP_RETRIES
 
 logger = setup_logger("downloader", level=LOG_LEVEL, to_file=LOG_TO_FILE, file_path=LOG_FILE_PATH)
 
