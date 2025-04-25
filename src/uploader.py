@@ -29,10 +29,12 @@ def upload_to_yandex_disk(file_path: str, folder_path: str, filename: str, max_r
         except yadisk.exceptions.PathExistsError:
             pass
     last_exc = None
-    t0 = time.time()
     for attempt in range(1, max_retries + 1):
         try:
-            y.upload(file_path, remote_path, overwrite=True)
+            t0 = time.time()
+            # Увеличиваем таймаут до 120 секунд
+            with open(file_path, "rb") as f:
+                y.upload(f, remote_path, overwrite=True, timeout=120)
             elapsed = time.time() - t0
             logger.info(f"Загружено на Яндекс.Диск: {remote_path} (время: {elapsed:.2f} сек, попытка {attempt})")
             return remote_path
@@ -95,9 +97,15 @@ def batch_upload_to_cloud(tasks: List[Dict[str, Any]], max_workers: int = 4, max
         try:
             if task["cloud_storage"] == "Yandex.Disk":
                 remote = upload_to_yandex_disk(task["file_path"], task.get("cloud_folder_path", ""), task["filename"], max_retries=max_retries)
+                # Удаляем файл после успешной загрузки
+                if os.path.exists(task["file_path"]):
+                    os.remove(task["file_path"])
                 return {"status": "успех", "cloud_storage": "Yandex.Disk", "remote_path": remote, "filename": task["filename"]}
             elif task["cloud_storage"] == "Google Drive":
                 remote = upload_to_google_drive(task["file_path"], task["google_drive_folder_id"], task.get("cloud_folder_path"), task["filename"], max_retries=max_retries)
+                # Удаляем файл после успешной загрузки
+                if os.path.exists(task["file_path"]):
+                    os.remove(task["file_path"])
                 return {"status": "успех", "cloud_storage": "Google Drive", "remote_id": remote, "filename": task["filename"]}
             else:
                 return {"status": "ошибка", "message": f"Неизвестное хранилище: {task['cloud_storage']}"}

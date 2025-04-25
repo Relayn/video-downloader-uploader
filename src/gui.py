@@ -21,13 +21,13 @@ class DownloadUploadWorker(QThread):
         self.filename = filename
         self.settings = settings
         self.signals = WorkerSignals()
+        self.gdrive_folder_id = "root"  # По умолчанию
 
     def run(self):
         try:
             # Импортировать здесь, чтобы избежать блокировки GUI при импорте тяжёлых модулей
             from downloader import batch_download_videos
             from uploader import batch_upload_to_cloud
-            # Пример: batch download
             url_list = [u.strip() for u in self.urls if u.strip()]
             download_tasks = [{"video_url": url} for url in url_list]
             download_results = batch_download_videos(download_tasks, temp_dir="temp")
@@ -35,13 +35,16 @@ class DownloadUploadWorker(QThread):
             # Пример: batch upload
             upload_tasks = []
             for result in download_results:
-                if result["status"] == "успех":
-                    upload_tasks.append({
+                if result.get("file_path"):
+                    upload_task = {
                         "file_path": result["file_path"],
                         "cloud_storage": self.cloud,
                         "cloud_folder_path": self.folder,
                         "filename": self.filename or result["title"] + "." + result["ext"]
-                    })
+                    }
+                    if self.cloud == "Google Drive":
+                        upload_task["google_drive_folder_id"] = self.gdrive_folder_id
+                    upload_tasks.append(upload_task)
             upload_results = batch_upload_to_cloud(upload_tasks)
             self.signals.progress.emit(100)
             self.signals.finished.emit({
@@ -74,9 +77,7 @@ class VideoUploaderGUI(QWidget):
         self.url_edit.setAcceptDrops(True)
         self.url_edit.installEventFilter(self)
         paste_btn = QPushButton("Вставить из буфера обмена")
-        paste_btn.setToolTip("Вставить ссылки из буфера обмена")
         paste_btn.clicked.connect(self.paste_from_clipboard)
-
         url_row = QHBoxLayout()
         url_row.addWidget(self.url_edit)
         url_row.addWidget(paste_btn)
@@ -84,41 +85,38 @@ class VideoUploaderGUI(QWidget):
         # Облачное хранилище
         cloud_label = QLabel("Облачное хранилище:")
         self.cloud_combo = QComboBox()
-        self.cloud_combo.addItems(["Яндекс.Диск", "Google Drive"])
-        self.cloud_combo.setToolTip("Выберите облако для загрузки видео")
-        self.cloud_combo.currentIndexChanged.connect(self.update_cloud_fields)
+        self.cloud_combo.addItems(["Google Drive", "Yandex.Disk"])
+        self.cloud_combo.currentTextChanged.connect(self.update_cloud_fields)
 
-        # Путь к папке в облаке
+        # Папка в облаке
         folder_label = QLabel("Папка в облаке:")
         self.folder_edit = QLineEdit()
-        self.folder_edit.setPlaceholderText("/Путь/к/папке (например, /Видео/YouTube)")
-        self.folder_edit.setToolTip("Путь к папке в облаке. Оставьте пустым для загрузки в корень.")
-        folder_btn = QPushButton("Создать папку")
-        folder_btn.setToolTip("Создать новую папку в облаке")
-        # TODO: folder_btn.clicked.connect(self.create_cloud_folder)
-
         folder_row = QHBoxLayout()
         folder_row.addWidget(self.folder_edit)
+        folder_btn = QPushButton("Создать папку")
         folder_row.addWidget(folder_btn)
+
+        # Новое поле: ID папки Google Drive
+        gdrive_id_label = QLabel("ID папки Google Drive:")
+        self.gdrive_id_edit = QLineEdit()
+        self.gdrive_id_edit.setPlaceholderText("Оставьте пустым для 'root'")
 
         # Имя файла
         filename_label = QLabel("Имя файла:")
         self.filename_edit = QLineEdit()
-        self.filename_edit.setPlaceholderText("Оставьте пустым для автоимени (по видео)")
-        self.filename_edit.setToolTip("Имя итогового файла. Можно оставить пустым.")
+        self.filename_edit.setPlaceholderText("Оставьте пустым для автоматич. (по видео)")
 
         # Авторизация
         auth_btn = QPushButton("Проверить подключение")
-        auth_btn.setToolTip("Проверить авторизацию в облаке")
-        self.auth_status = QLabel("Статус: не проверено")
         auth_btn.clicked.connect(self.check_auth)
+        self.auth_status = QLabel("Статус: не проверено")
 
         # Прогрессбар
         self.progress_bar = QProgressBar()
-        self.progress_bar.setValue(0)
         self.progress_bar.setVisible(False)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("Прогресс: 0%")
 
-        # Кнопка запуска
         self.start_btn = QPushButton("Скачать и загрузить")
         self.start_btn.clicked.connect(self.start_download_upload)
 
@@ -128,6 +126,8 @@ class VideoUploaderGUI(QWidget):
         layout.addWidget(self.cloud_combo)
         layout.addWidget(folder_label)
         layout.addLayout(folder_row)
+        layout.addWidget(gdrive_id_label)
+        layout.addWidget(self.gdrive_id_edit)
         layout.addWidget(filename_label)
         layout.addWidget(self.filename_edit)
         layout.addWidget(auth_btn)
@@ -141,13 +141,16 @@ class VideoUploaderGUI(QWidget):
         cloud = self.cloud_combo.currentText()
         folder = self.folder_edit.text()
         filename = self.filename_edit.text()
+        gdrive_id = self.gdrive_id_edit.text().strip() or "root"
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         self.start_btn.setEnabled(False)
         self.worker = DownloadUploadWorker(urls, cloud, folder, filename, self.settings)
+        self.worker.gdrive_folder_id = gdrive_id  # Добавим атрибут для передачи ID
         self.worker.signals.progress.connect(self.progress_bar.setValue)
         self.worker.signals.error.connect(self.show_error)
         self.worker.signals.finished.connect(self.on_task_finished)
+        self.worker.signals.progress.connect(self.update_progress_label)  # Новый сигнал для текста
         self.worker.start()
 
     def show_error(self, msg):
@@ -158,8 +161,22 @@ class VideoUploaderGUI(QWidget):
     def on_task_finished(self, result):
         self.progress_bar.setVisible(False)
         self.start_btn.setEnabled(True)
-        QMessageBox.information(self, "Готово", "Скачивание и загрузка завершены!\nСм. лог для деталей.")
-        # Можно добавить отображение подробностей result
+        # Показываем детали результата
+        msg = "Скачивание и загрузка завершены!\n"
+        if "download" in result:
+            msg += f"\nСкачано: {len(result['download'])} файлов"
+        if "upload" in result:
+            success = [r for r in result['upload'] if r.get('status') == 'успех']
+            errors = [r for r in result['upload'] if r.get('status') != 'успех']
+            msg += f"\nЗагружено: {len(success)} файлов"
+            if errors:
+                msg += f"\nОшибки загрузки: {len(errors)}"
+                for err in errors:
+                    msg += f"\n{err.get('filename', '')}: {err.get('message', '')}"
+        QMessageBox.information(self, "Готово", msg)
+
+    def update_progress_label(self, value):
+        self.progress_bar.setFormat(f"Прогресс: {value}%")
 
     def paste_from_clipboard(self):
         clipboard = QApplication.clipboard()
@@ -172,7 +189,7 @@ class VideoUploaderGUI(QWidget):
     def check_auth(self):
         cloud = self.cloud_combo.currentText()
         try:
-            if cloud == "Яндекс.Диск":
+            if cloud == "Yandex.Disk":
                 from auth import get_yandex_token
                 token = get_yandex_token()
                 if token:
