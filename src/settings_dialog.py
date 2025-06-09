@@ -1,63 +1,143 @@
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QFileDialog, QCheckBox, QHBoxLayout
+import os
+from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
+    QVBoxLayout,
+    QLineEdit,
+    QPushButton,
+    QFileDialog,
+    QCheckBox,
+    QLabel,
+    QGroupBox,
+    QWidget,
+)
+from PySide6.QtCore import Qt
+from src.config import get_config, AppSettings
+
 
 class SettingsDialog(QDialog):
+    """Диалоговое окно для редактирования настроек приложения."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Настройки")
-        self.setMinimumWidth(400)
-        layout = QVBoxLayout()
+        self.setMinimumWidth(500)
+        self.config = get_config()
 
-        # Путь к ffmpeg
-        self.ffmpeg_label = QLabel("Путь к ffmpeg:")
-        self.ffmpeg_path = QLineEdit()
-        self.ffmpeg_btn = QPushButton("Выбрать...")
-        self.ffmpeg_btn.clicked.connect(self.select_ffmpeg)
-        ffmpeg_row = QHBoxLayout()
-        ffmpeg_row.addWidget(self.ffmpeg_path)
-        ffmpeg_row.addWidget(self.ffmpeg_btn)
+        # Layout
+        self.layout = QVBoxLayout(self)
 
-        # Логирование в файл
-        self.log_to_file = QCheckBox("Включить логирование в файл")
-        self.log_file_label = QLabel("Путь к лог-файлу:")
-        self.log_file_path = QLineEdit()
-        self.log_file_btn = QPushButton("Выбрать...")
-        self.log_file_btn.clicked.connect(self.select_log_file)
-        log_row = QHBoxLayout()
-        log_row.addWidget(self.log_file_path)
-        log_row.addWidget(self.log_file_btn)
+        # General Settings
+        general_group = QGroupBox("Основные")
+        general_layout = QVBoxLayout()
 
-        # Кнопки
-        self.save_btn = QPushButton("Сохранить")
-        self.cancel_btn = QPushButton("Отмена")
-        btn_row = QHBoxLayout()
-        btn_row.addWidget(self.save_btn)
-        btn_row.addWidget(self.cancel_btn)
+        # YTDLP Format
+        general_layout.addWidget(QLabel("Формат загрузки (yt-dlp format string):"))
+        self.ytdlp_format_edit = QLineEdit()
+        general_layout.addWidget(self.ytdlp_format_edit)
 
-        layout.addWidget(self.ffmpeg_label)
-        layout.addLayout(ffmpeg_row)
-        layout.addWidget(self.log_to_file)
-        layout.addWidget(self.log_file_label)
-        layout.addLayout(log_row)
-        layout.addLayout(btn_row)
-        self.setLayout(layout)
+        # FFMPEG Path
+        general_layout.addWidget(QLabel("Путь к ffmpeg.exe (необязательно):"))
+        self.ffmpeg_path_edit = self.create_file_selector()
+        general_layout.addWidget(self.ffmpeg_path_edit)
 
-        self.cancel_btn.clicked.connect(self.reject)
-        self.save_btn.clicked.connect(self.accept)
-        self.log_to_file.toggled.connect(self.update_log_fields)
-        self.update_log_fields()
+        general_group.setLayout(general_layout)
+        self.layout.addWidget(general_group)
 
-    def select_ffmpeg(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Выбрать ffmpeg", filter="ffmpeg.exe (*.exe);;Все файлы (*)")
+        # Credentials
+        creds_group = QGroupBox("Учетные данные")
+        creds_layout = QVBoxLayout()
+
+        # Google Credentials
+        creds_layout.addWidget(QLabel("Путь к файлу Google 'credentials.json':"))
+        self.google_credentials_edit = self.create_file_selector(is_json=True)
+        creds_layout.addWidget(self.google_credentials_edit)
+
+        # Yandex Token
+        creds_layout.addWidget(QLabel("Токен Яндекс.Диска:"))
+        self.yandex_token_edit = QLineEdit()
+        self.yandex_token_edit.setEchoMode(QLineEdit.Password)
+        creds_layout.addWidget(self.yandex_token_edit)
+
+        creds_group.setLayout(creds_layout)
+        self.layout.addWidget(creds_group)
+
+        # Logging
+        log_group = QGroupBox("Логирование")
+        log_layout = QVBoxLayout()
+        self.log_to_file_checkbox = QCheckBox("Включить логирование в файл")
+        log_layout.addWidget(self.log_to_file_checkbox)
+        log_layout.addWidget(QLabel("Путь к лог-файлу:"))
+        self.log_file_path_edit = self.create_file_selector(is_save=True)
+        log_layout.addWidget(self.log_file_path_edit)
+        log_group.setLayout(log_layout)
+        self.layout.addWidget(log_group)
+
+        # Buttons
+        self.buttonBox = QDialogButtonBox(
+            QDialogButtonBox.Save | QDialogButtonBox.Cancel
+        )
+        self.buttonBox.accepted.connect(self.accept)
+        self.buttonBox.rejected.connect(self.reject)
+        self.layout.addWidget(self.buttonBox)
+
+        self.load_settings()
+
+    def create_file_selector(self, is_json=False, is_save=False):
+        """Вспомогательная функция для создания строки с выбором файла."""
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        line_edit = QLineEdit()
+        button = QPushButton("Выбрать...")
+        layout.addWidget(line_edit)
+        layout.addWidget(button)
+
+        if is_save:
+            button.clicked.connect(lambda: self.select_file_path(line_edit, save=True))
+        else:
+            filter = "JSON files (*.json)" if is_json else "All files (*)"
+            button.clicked.connect(
+                lambda: self.select_file_path(line_edit, filter=filter)
+            )
+
+        # Attach the line edit to the container for easy access
+        container.line_edit = line_edit
+        return container
+
+    def select_file_path(self, line_edit, filter="All files (*)", save=False):
+        """Открывает диалог выбора файла/сохранения."""
+        if save:
+            path, _ = QFileDialog.getSaveFileName(self, "Выбрать файл", filter=filter)
+        else:
+            path, _ = QFileDialog.getOpenFileName(self, "Выбрать файл", filter=filter)
+
         if path:
-            self.ffmpeg_path.setText(path)
+            line_edit.setText(path)
 
-    def select_log_file(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Выбрать лог-файл", filter="*.log")
-        if path:
-            self.log_file_path.setText(path)
+    def load_settings(self):
+        """Загружает текущие настройки в поля диалога."""
+        self.ytdlp_format_edit.setText(self.config.YTDLP_FORMAT)
+        self.ffmpeg_path_edit.line_edit.setText(str(self.config.FFMPEG_PATH or ""))
+        self.google_credentials_edit.line_edit.setText(
+            str(self.config.GOOGLE_CREDENTIALS or "")
+        )
+        self.yandex_token_edit.setText(
+            self.config.YANDEX_TOKEN.get_secret_value()
+            if self.config.YANDEX_TOKEN
+            else ""
+        )
+        self.log_to_file_checkbox.setChecked(self.config.LOG_TO_FILE)
+        self.log_file_path_edit.line_edit.setText(self.config.LOG_FILE_PATH)
 
-    def update_log_fields(self):
-        enabled = self.log_to_file.isChecked()
-        self.log_file_label.setEnabled(enabled)
-        self.log_file_path.setEnabled(enabled)
-        self.log_file_btn.setEnabled(enabled)
+    def get_settings_data(self) -> dict:
+        """Собирает данные из полей диалога в словарь для сохранения в .env."""
+        return {
+            "YTDLP_FORMAT": self.ytdlp_format_edit.text(),
+            "FFMPEG_PATH": self.ffmpeg_path_edit.line_edit.text() or "",
+            "GOOGLE_CREDENTIALS": self.google_credentials_edit.line_edit.text() or "",
+            "YANDEX_TOKEN": self.yandex_token_edit.text() or "",
+            "LOG_TO_FILE": self.log_to_file_checkbox.isChecked(),
+            "LOG_FILE_PATH": self.log_file_path_edit.line_edit.text(),
+        }

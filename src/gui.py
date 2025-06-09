@@ -1,236 +1,288 @@
-from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextEdit, QLabel, QLineEdit,
-    QComboBox, QFileDialog, QProgressBar, QMessageBox, QGroupBox
-)
-from PySide6.QtCore import Qt, QThread, Signal, QObject, QEvent
 import sys
-from src.settings_dialog import SettingsDialog
+from pathlib import Path
 
-# --- Асинхронные задачи ---
+from PySide6.QtCore import QObject, Signal, QRunnable, QThreadPool, Slot, QThread
+from PySide6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QPushButton,
+    QTextEdit,
+    QLabel,
+    QLineEdit,
+    QComboBox,
+    QProgressBar,
+    QMessageBox,
+)
+
+from src.config import (
+    get_config,
+    reload_config,
+    save_specific_settings_to_env,
+    setup_logger,
+    ConfigError,
+)
+from src.settings_dialog import SettingsDialog
+from src.downloader import batch_download_videos
+from src.uploader import batch_upload_to_cloud
+import asyncio
+
+
 class WorkerSignals(QObject):
+    """Сигналы для фонового обработчика."""
+
     finished = Signal(object)
     error = Signal(str)
-    progress = Signal(int)
+    progress = Signal(int, str)  # процент, сообщение
 
-class DownloadUploadWorker(QThread):
-    def __init__(self, urls, cloud, folder, filename, settings):
+
+class DownloadUploadWorker(QRunnable):
+    """Фоновый обработчик для скачивания и загрузки."""
+
+    def __init__(
+        self, urls: list[str], cloud: str, folder: str, filename_template: str
+    ):
         super().__init__()
+        self.signals = WorkerSignals()
         self.urls = urls
         self.cloud = cloud
         self.folder = folder
-        self.filename = filename
-        self.settings = settings
-        self.signals = WorkerSignals()
-        self.gdrive_folder_id = "root"  # По умолчанию
+        self.filename_template = filename_template
 
+    @Slot()
     def run(self):
         try:
-            # Импортировать здесь, чтобы избежать блокировки GUI при импорте тяжёлых модулей
-            from downloader import batch_download_videos
-            from uploader import batch_upload_to_cloud
-            url_list = [u.strip() for u in self.urls if u.strip()]
-            download_tasks = [{"video_url": url} for url in url_list]
-            download_results = batch_download_videos(download_tasks, temp_dir="temp")
-            self.signals.progress.emit(50)
-            # Пример: batch upload
-            upload_tasks = []
-            for result in download_results:
-                if result.get("file_path"):
-                    upload_task = {
-                        "file_path": result["file_path"],
+            from tempfile import TemporaryDirectory
+
+            with TemporaryDirectory(prefix="vdu_") as temp_dir_str:
+                temp_dir = Path(temp_dir_str)
+                self.signals.progress.emit(
+                    10, f"Создана временная папка: {temp_dir_str}"
+                )
+
+                # --- Этап 1: Скачивание ---
+                self.signals.progress.emit(20, "Начало скачивания видео...")
+                download_results = batch_download_videos(self.urls, temp_dir)
+
+                successful_downloads = [
+                    res for res in download_results if res["status"] == "успех"
+                ]
+                if not successful_downloads:
+                    raise IOError("Ни один файл не был успешно скачан.")
+
+                self.signals.progress.emit(
+                    50, f"Скачано {len(successful_downloads)} видео. Начало загрузки..."
+                )
+
+                # --- Этап 2: Загрузка ---
+                upload_tasks = []
+                for res in successful_downloads:
+                    file_path = res["path"]
+                    # Если шаблон имени не задан, используем имя скачанного файла
+                    filename = self.filename_template or file_path.name
+                    task = {
+                        "file_path": str(file_path),
                         "cloud_storage": self.cloud,
                         "cloud_folder_path": self.folder,
-                        "filename": self.filename or result["title"] + "." + result["ext"]
+                        "filename": filename,
                     }
-                    if self.cloud == "Google Drive":
-                        upload_task["google_drive_folder_id"] = self.gdrive_folder_id
-                    upload_tasks.append(upload_task)
-            upload_results = batch_upload_to_cloud(upload_tasks)
-            self.signals.progress.emit(100)
-            self.signals.finished.emit({
-                "download": download_results,
-                "upload": upload_results
-            })
+                    upload_tasks.append(task)
+
+                self.signals.progress.emit(
+                    75, f"Загрузка {len(upload_tasks)} файлов в облако..."
+                )
+                # Пакетная загрузка
+                try:
+                    upload_results = asyncio.run(batch_upload_to_cloud(upload_tasks))
+                    for res in upload_results:
+                        if res["status"] == "ошибка":
+                            self.signals.error.emit(f"Ошибка при загрузке: {res}")
+                        else:
+                            storage = res.get("storage", "Неизвестно")
+                            path = res.get("path") or res.get("id")
+                            self.signals.progress.emit(
+                                100, f"Успешно загружено в {storage}: {path}"
+                            )
+
+                except Exception as e:
+                    self.signals.error.emit(
+                        f"Критическая ошибка при пакетной загрузке: {e}"
+                    )
+
+                self.signals.finished.emit(
+                    {"downloads": download_results, "uploads": upload_results}
+                )
+
         except Exception as e:
             self.signals.error.emit(str(e))
 
-class VideoUploaderGUI(QWidget):
+
+class VideoUploaderGUI(QMainWindow):
+    """Основной класс GUI."""
+
     def __init__(self):
         super().__init__()
+        try:
+            self.config = get_config()
+        except ConfigError as e:
+            QMessageBox.critical(self, "Критическая ошибка конфигурации", str(e))
+            sys.exit(1)
+
+        self.logger = setup_logger(
+            "GUI",
+            level=self.config.LOG_LEVEL,
+            to_file=self.config.LOG_TO_FILE,
+            file_path=self.config.LOG_FILE_PATH,
+        )
+        self.threadpool = QThreadPool()
+        self.logger.info(
+            f"GUI запущен. Макс. потоков: {self.threadpool.maxThreadCount()}"
+        )
+
         self.setWindowTitle("Video Downloader & Uploader")
-        self.setMinimumWidth(600)
-        self.init_ui()
-        self.settings = {
-            'ffmpeg_path': '',
-            'log_to_file': False,
-            'log_file_path': ''
-        }
-        self.worker = None
+        self.setGeometry(100, 100, 700, 500)
+        self.setup_ui()
 
-    def init_ui(self):
-        layout = QVBoxLayout()
+    def setup_ui(self):
+        # ... (UI setup code will be similar, just cleaner)
+        # Main layout
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
 
-        # Ссылки на видео
-        url_label = QLabel("Ссылки на видео:")
+        # URLs
+        main_layout.addWidget(QLabel("Ссылки на видео (каждая с новой строки):"))
         self.url_edit = QTextEdit()
-        self.url_edit.setPlaceholderText("Введите одну или несколько ссылок (по одной на строку)...\nИли перетащите текстовый файл/ссылки сюда.")
-        self.url_edit.setAcceptDrops(True)
-        self.url_edit.installEventFilter(self)
-        paste_btn = QPushButton("Вставить из буфера обмена")
-        paste_btn.clicked.connect(self.paste_from_clipboard)
-        url_row = QHBoxLayout()
-        url_row.addWidget(self.url_edit)
-        url_row.addWidget(paste_btn)
+        self.url_edit.setPlaceholderText("https://www.youtube.com/watch?v=...")
+        main_layout.addWidget(self.url_edit)
 
-        # Облачное хранилище
-        cloud_label = QLabel("Облачное хранилище:")
+        # Cloud options
+        cloud_layout = QHBoxLayout()
+        cloud_layout.addWidget(QLabel("Облако:"))
         self.cloud_combo = QComboBox()
         self.cloud_combo.addItems(["Google Drive", "Yandex.Disk"])
-        self.cloud_combo.currentTextChanged.connect(self.update_cloud_fields)
+        cloud_layout.addWidget(self.cloud_combo)
+        main_layout.addLayout(cloud_layout)
 
-        # Папка в облаке
-        folder_label = QLabel("Папка в облаке:")
+        # Cloud folder
+        main_layout.addWidget(QLabel("Папка в облаке (например, 'мое_видео/2024'):"))
         self.folder_edit = QLineEdit()
-        folder_row = QHBoxLayout()
-        folder_row.addWidget(self.folder_edit)
-        folder_btn = QPushButton("Создать папку")
-        folder_row.addWidget(folder_btn)
+        main_layout.addWidget(self.folder_edit)
 
-        # Новое поле: ID папки Google Drive
-        gdrive_id_label = QLabel("ID папки Google Drive:")
-        self.gdrive_id_edit = QLineEdit()
-        self.gdrive_id_edit.setPlaceholderText("Оставьте пустым для 'root'")
-
-        # Имя файла
-        filename_label = QLabel("Имя файла:")
+        # Filename template
+        main_layout.addWidget(QLabel("Шаблон имени файла (оставьте пустым для авто):"))
         self.filename_edit = QLineEdit()
-        self.filename_edit.setPlaceholderText("Оставьте пустым для автоматич. (по видео)")
+        main_layout.addWidget(self.filename_edit)
 
-        # Авторизация
-        auth_btn = QPushButton("Проверить подключение")
-        auth_btn.clicked.connect(self.check_auth)
-        self.auth_status = QLabel("Статус: не проверено")
-
-        # Прогрессбар
+        # Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setFormat("Прогресс: 0%")
+        main_layout.addWidget(self.progress_bar)
 
-        self.start_btn = QPushButton("Скачать и загрузить")
-        self.start_btn.clicked.connect(self.start_download_upload)
+        # Status label
+        self.status_label = QLabel("Готов к работе.")
+        self.status_label.setStyleSheet("color: grey;")
+        main_layout.addWidget(self.status_label)
 
-        layout.addWidget(url_label)
-        layout.addLayout(url_row)
-        layout.addWidget(cloud_label)
-        layout.addWidget(self.cloud_combo)
-        layout.addWidget(folder_label)
-        layout.addLayout(folder_row)
-        layout.addWidget(gdrive_id_label)
-        layout.addWidget(self.gdrive_id_edit)
-        layout.addWidget(filename_label)
-        layout.addWidget(self.filename_edit)
-        layout.addWidget(auth_btn)
-        layout.addWidget(self.auth_status)
-        layout.addWidget(self.progress_bar)
-        layout.addWidget(self.start_btn)
-        self.setLayout(layout)
+        # Buttons
+        button_layout = QHBoxLayout()
+        self.start_btn = QPushButton("▶️ Начать")
+        self.start_btn.clicked.connect(self.start_processing)
+        self.settings_btn = QPushButton("⚙️ Настройки")
+        self.settings_btn.clicked.connect(self.open_settings)
+        button_layout.addWidget(self.start_btn)
+        button_layout.addWidget(self.settings_btn)
+        main_layout.addLayout(button_layout)
 
-    def start_download_upload(self):
-        urls = self.url_edit.toPlainText().splitlines()
-        cloud = self.cloud_combo.currentText()
-        folder = self.folder_edit.text()
-        filename = self.filename_edit.text()
-        gdrive_id = self.gdrive_id_edit.text().strip() or "root"
+    def start_processing(self):
+        urls = [
+            url.strip()
+            for url in self.url_edit.toPlainText().splitlines()
+            if url.strip()
+        ]
+        if not urls:
+            self.show_message(
+                "Ошибка", "Пожалуйста, введите хотя бы один URL.", "warning"
+            )
+            return
+
+        self.start_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
-        self.start_btn.setEnabled(False)
-        self.worker = DownloadUploadWorker(urls, cloud, folder, filename, self.settings)
-        self.worker.gdrive_folder_id = gdrive_id  # Добавим атрибут для передачи ID
-        self.worker.signals.progress.connect(self.progress_bar.setValue)
-        self.worker.signals.error.connect(self.show_error)
-        self.worker.signals.finished.connect(self.on_task_finished)
-        self.worker.signals.progress.connect(self.update_progress_label)  # Новый сигнал для текста
-        self.worker.start()
 
-    def show_error(self, msg):
-        self.progress_bar.setVisible(False)
+        worker = DownloadUploadWorker(
+            urls=urls,
+            cloud=self.cloud_combo.currentText(),
+            folder=self.folder_edit.text(),
+            filename_template=self.filename_edit.text(),
+        )
+        worker.signals.progress.connect(self.update_progress)
+        worker.signals.finished.connect(self.on_finished)
+        worker.signals.error.connect(self.on_error)
+        self.threadpool.start(worker)
+
+    def update_progress(self, percent, message):
+        self.progress_bar.setValue(percent)
+        self.status_label.setText(message)
+        self.logger.info(f"Прогресс ({percent}%): {message}")
+
+    def on_finished(self, results):
         self.start_btn.setEnabled(True)
-        QMessageBox.critical(self, "Ошибка", msg)
-
-    def on_task_finished(self, result):
         self.progress_bar.setVisible(False)
+        self.status_label.setText("Готово!")
+        self.logger.info("Задача успешно завершена.")
+        # Тут можно показать детальный отчет по results
+        QMessageBox.information(
+            self, "Завершено", f"Задача выполнена.\nСм. детали в логах."
+        )
+
+    def on_error(self, error_message):
         self.start_btn.setEnabled(True)
-        # Показываем детали результата
-        msg = "Скачивание и загрузка завершены!\n"
-        if "download" in result:
-            msg += f"\nСкачано: {len(result['download'])} файлов"
-        if "upload" in result:
-            success = [r for r in result['upload'] if r.get('status') == 'успех']
-            errors = [r for r in result['upload'] if r.get('status') != 'успех']
-            msg += f"\nЗагружено: {len(success)} файлов"
-            if errors:
-                msg += f"\nОшибки загрузки: {len(errors)}"
-                for err in errors:
-                    msg += f"\n{err.get('filename', '')}: {err.get('message', '')}"
-        QMessageBox.information(self, "Готово", msg)
+        self.progress_bar.setVisible(False)
+        self.status_label.setText("Ошибка!")
+        self.show_message("Ошибка выполнения", error_message, "critical")
+        self.logger.error(f"Ошибка в воркере: {error_message}")
 
-    def update_progress_label(self, value):
-        self.progress_bar.setFormat(f"Прогресс: {value}%")
+    def open_settings(self):
+        dialog = SettingsDialog(self)
+        if dialog.exec():  # exec() returns true if accepted
+            try:
+                save_specific_settings_to_env(dialog.get_settings_data())
+                self.config = reload_config()
+                # Re-setup logger with new settings
+                self.logger = setup_logger(
+                    "GUI",
+                    level=self.config.LOG_LEVEL,
+                    to_file=self.config.LOG_TO_FILE,
+                    file_path=self.config.LOG_FILE_PATH,
+                )
+                self.show_message("Успех", "Настройки сохранены и применены.")
+            except Exception as e:
+                self.show_message(
+                    "Ошибка", f"Не удалось сохранить настройки:\n{e}", "critical"
+                )
 
-    def paste_from_clipboard(self):
-        clipboard = QApplication.clipboard()
-        self.url_edit.setText(clipboard.text())
+    def show_message(self, title, text, level="info"):
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(title)
+        msg_box.setText(text)
+        if level == "warning":
+            msg_box.setIcon(QMessageBox.Warning)
+        elif level == "critical":
+            msg_box.setIcon(QMessageBox.Critical)
+        else:
+            msg_box.setIcon(QMessageBox.Information)
+        msg_box.exec()
 
-    def update_cloud_fields(self):
-        # Можно добавить динамическое изменение полей под облако
-        pass
-
-    def check_auth(self):
-        cloud = self.cloud_combo.currentText()
-        try:
-            if cloud == "Yandex.Disk":
-                from auth import get_yandex_token
-                token = get_yandex_token()
-                if token:
-                    self.auth_status.setText("Статус: авторизация Яндекс.Диск успешна")
-                else:
-                    self.auth_status.setText("Статус: нет токена Яндекс.Диск")
-            elif cloud == "Google Drive":
-                from auth import get_google_drive_credentials
-                creds = get_google_drive_credentials()
-                if creds and creds.valid:
-                    self.auth_status.setText("Статус: авторизация Google Drive успешна")
-                else:
-                    self.auth_status.setText("Статус: ошибка авторизации Google Drive")
-            else:
-                self.auth_status.setText("Статус: неизвестное облако")
-        except Exception as e:
-            self.auth_status.setText(f"Статус: ошибка — {e}")
-            QMessageBox.critical(self, "Ошибка авторизации", str(e))
-
-    def eventFilter(self, obj, event):
-        # Drag-and-drop файлов
-        if obj == self.url_edit and event.type() == QEvent.DragEnter:
-            if event.mimeData().hasUrls() or event.mimeData().hasText():
-                event.acceptProposedAction()
-                return True
-        if obj == self.url_edit and event.type() == QEvent.Drop:
-            if event.mimeData().hasUrls():
-                for url in event.mimeData().urls():
-                    if url.isLocalFile() and url.toLocalFile().endswith('.txt'):
-                        with open(url.toLocalFile(), encoding='utf-8') as f:
-                            self.url_edit.append(f.read())
-            elif event.mimeData().hasText():
-                self.url_edit.append(event.mimeData().text())
-            return True
-        return super().eventFilter(obj, event)
 
 def main():
     app = QApplication(sys.argv)
     window = VideoUploaderGUI()
     window.show()
     sys.exit(app.exec())
+
 
 if __name__ == "__main__":
     main()

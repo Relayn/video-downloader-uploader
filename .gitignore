@@ -22,9 +22,18 @@ temp/
 *.log
 
 # User docs
-PLANNING.md
-Task.md
 
 # Misc
 *.iml
 src/token.json
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Test coverage
+.coverage
+.pytest_cache/
+htmlcov/
+token.json

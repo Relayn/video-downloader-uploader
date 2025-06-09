@@ -1,23 +1,33 @@
 import pytest
+from unittest.mock import patch
 from PySide6.QtWidgets import QApplication
-from src.gui import VideoUploaderGUI
+from src.config import AppSettings
 
-@pytest.fixture
-def app(qtbot):
-    test_app = VideoUploaderGUI()
-    qtbot.addWidget(test_app)
-    return test_app
 
-def test_gui_download_upload_flow(app, qtbot):
-    app.url_edit.setPlainText("https://youtube.com/watch?v=abc")
-    app.cloud_combo.setCurrentText("Yandex.Disk")
-    app.folder_edit.setText("TestFolder")
-    app.gdrive_id_edit.setText("")
-    app.filename_edit.setText("TestFile")
-    # Мокаем воркер и сигнал завершения
-    class DummyWorker:
-        signals = type("S", (), {"progress": lambda *a: None, "error": lambda *a: None, "finished": lambda *a: None})()
-        def start(self): app.on_task_finished({"download": [{}], "upload": [{"status": "успех"}]})
-    app.worker = DummyWorker()
-    app.start_download_upload()
-    assert app.progress_bar.value() == 0 or app.progress_bar.value() == 100
+# Фикстура для QApplication, нужна для любых тестов с виджетами
+@pytest.fixture(scope="session")
+def qt_app():
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    return app
+
+
+@patch("src.gui.get_config")
+def test_gui_initialization(mock_get_config, qt_app):
+    """
+    Простой тест, который проверяет, что GUI инициализируется без ошибок.
+    """
+    # Возвращаем "чистый" конфиг, чтобы избежать проблем с .env
+    mock_get_config.return_value = AppSettings(_env_file=None)
+
+    from src.gui import VideoUploaderGUI
+
+    # Пытаемся создать экземпляр GUI
+    try:
+        window = VideoUploaderGUI()
+        # Если мы дошли сюда, значит, __init__ отработал без падений.
+        assert window is not None
+        assert window.windowTitle() == "Video Downloader & Uploader"
+    except Exception as e:
+        pytest.fail(f"Не удалось инициализировать VideoUploaderGUI: {e}")
