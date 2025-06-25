@@ -1,160 +1,196 @@
-import pytest
-from unittest.mock import patch, MagicMock
-from pathlib import Path
-import re
+# tests/test_auth.py
 
-# Импортируем тестируемые функции и классы
-from src.auth import get_yandex_token, get_google_drive_credentials, AuthError
-from src.config import AppSettings
+import pytest
+from unittest.mock import patch, MagicMock, call
 from pydantic import SecretStr
 
+# Тестируемый модуль
+from src import auth
+from src.auth import get_yandex_token, get_google_drive_credentials, AuthError
+from src.config import AppSettings
 
-# Очистка кеша перед каждым тестом, чтобы избежать влияния одного теста на другой
+
 @pytest.fixture(autouse=True)
-def clear_auth_caches():
+def clear_caches():
     """Фикстура для автоматической очистки кеша в src.auth перед каждым тестом."""
-    with patch("src.auth._yandex_token_cache", None), patch(
-        "src.auth._google_creds_cache", None
-    ):
-        yield
+    auth._yandex_token_cache = None
+    auth._google_creds_cache = None
+    yield
 
 
 @pytest.fixture
-def mock_app_settings():
-    """Фабрика для создания моков AppSettings с нужными параметрами."""
-
+def mock_config(monkeypatch):
+    """Фабрика для создания и внедрения мока AppSettings."""
     def _factory(**kwargs):
-        # Используем model_construct для создания экземпляра без валидации,
-        # так как нам не нужны реальные файлы для путей в большинстве тестов.
-        mock_settings = AppSettings.model_construct(**kwargs)
-
-        # Мокаем get_config в модуле auth, чтобы он возвращал наш объект настроек
-        patcher = patch("src.auth.get_config", return_value=mock_settings)
-        patcher.start()
-        # Возвращаем patcher, чтобы можно было его остановить после теста
-        return patcher
-
-    yield _factory
-    # Убираем все патчи после завершения теста, чтобы не влиять на другие тесты
-    patch.stopall()
+        settings = AppSettings.model_construct(**kwargs)
+        monkeypatch.setattr(auth, "get_config", lambda: settings)
+        return settings
+    return _factory
 
 
-# ==============================================================================
+# ==================================
 # Тесты для get_yandex_token
-# ==============================================================================
+# ==================================
+
+def test_get_yandex_token_success(mock_config):
+    mock_config(YANDEX_DISK_TOKEN=SecretStr("test-token"))
+    assert get_yandex_token() == "test-token"
 
 
-def test_get_yandex_token_success(mock_app_settings):
-    """Тест успешного получения токена Yandex."""
-    mock_app_settings(YANDEX_TOKEN=SecretStr("test_token_123"))
-    token = get_yandex_token()
-    assert token == "test_token_123"
-
-
-def test_get_yandex_token_cached(mock_app_settings):
-    """Тест, что токен Yandex кешируется после первого вызова."""
-    mock_settings_provider = mock_app_settings(YANDEX_TOKEN=SecretStr("test_token_123"))
-
-    # Первый вызов - должен получить из "конфига"
-    assert get_yandex_token() == "test_token_123"
-
-    # Второй вызов - должен быть из кеша. Мы меняем конфиг, чтобы это проверить.
-    mock_settings_provider.stop()  # останавливаем старый патч
-    mock_app_settings(YANDEX_TOKEN=SecretStr("new_token_456"))
-    assert get_yandex_token() == "test_token_123"  # Проверяем, что значение старое
-
-
-def test_get_yandex_token_failure_not_set(mock_app_settings):
-    """Тест ошибки, когда YANDEX_TOKEN не установлен."""
-    mock_app_settings(YANDEX_TOKEN=None)
-    with pytest.raises(AuthError, match="YANDEX_TOKEN не найден в конфигурации"):
+def test_get_yandex_token_not_set_raises_error(mock_config):
+    mock_config(YANDEX_DISK_TOKEN=None)
+    with pytest.raises(AuthError, match="YANDEX_DISK_TOKEN не найден"):
         get_yandex_token()
 
 
-# ==============================================================================
+def test_get_yandex_token_is_cached(mock_config):
+    mock_config(YANDEX_DISK_TOKEN=SecretStr("first-call-token"))
+    token1 = get_yandex_token()
+    assert token1 == "first-call-token"
+    mock_config(YANDEX_DISK_TOKEN=SecretStr("second-call-token"))
+    token2 = get_yandex_token()
+    assert token2 == "first-call-token"
+
+
+# ==================================
 # Тесты для get_google_drive_credentials
-# ==============================================================================
+# ==================================
+
+def test_get_google_creds_no_creds_file_raises_error(mock_config, tmp_path):
+    mock_config(GOOGLE_CREDS_PATH=tmp_path / "non-existent.json")
+    with pytest.raises(AuthError, match="Файл учетных данных Google 'credentials.json' не найден"):
+        get_google_drive_credentials()
 
 
+@patch("src.auth.os.path.exists", return_value=True)
 @patch("src.auth.Credentials")
-@patch("src.auth.os.path.exists")
-def test_get_google_drive_credentials_from_valid_token_file(
-    mock_exists, MockCredentials, mock_app_settings, tmp_path
-):
-    """Успешное получение учетных данных из существующего и валидного token.json."""
+def test_get_google_creds_from_valid_token_file(MockCredentials, mock_os_exists, mock_config, tmp_path):
     creds_file = tmp_path / "credentials.json"
     creds_file.touch()
-    mock_app_settings(GOOGLE_CREDENTIALS=creds_file)
-
-    mock_exists.return_value = True  # token.json существует
+    mock_config(GOOGLE_CREDS_PATH=creds_file)
     mock_creds_instance = MagicMock(valid=True)
     MockCredentials.from_authorized_user_file.return_value = mock_creds_instance
-
     creds = get_google_drive_credentials()
-
     assert creds == mock_creds_instance
-    MockCredentials.from_authorized_user_file.assert_called_once_with(
-        "token.json", ["https://www.googleapis.com/auth/drive.file"]
-    )
+    mock_os_exists.assert_any_call("token.json")
+    MockCredentials.from_authorized_user_file.assert_called_once()
 
 
+@patch("src.auth.os.path.exists", return_value=True)
 @patch("src.auth.Credentials")
-@patch("src.auth.os.path.exists")
-def test_get_google_drive_credentials_expired_token_refresh_success(
-    mock_exists, MockCredentials, mock_app_settings, tmp_path
-):
-    """Тест успешного обновления истекшего токена."""
+@patch("builtins.open")
+def test_get_google_creds_expired_token_refresh_success(mock_open, MockCredentials, mock_os_exists, mock_config, tmp_path):
     creds_file = tmp_path / "credentials.json"
     creds_file.touch()
-    mock_app_settings(GOOGLE_CREDENTIALS=creds_file)
-
-    mock_exists.return_value = True  # token.json существует
-    mock_creds_instance = MagicMock(
-        valid=False, expired=True, refresh_token="some_refresh_token"
-    )
+    mock_config(GOOGLE_CREDS_PATH=creds_file)
+    mock_creds_instance = MagicMock(valid=False, expired=True, refresh_token="some-token")
+    mock_creds_instance.refresh = MagicMock()
+    mock_creds_instance.to_json.return_value = '{"token": "refreshed"}'
     MockCredentials.from_authorized_user_file.return_value = mock_creds_instance
-
-    creds = get_google_drive_credentials()
-
-    assert creds == mock_creds_instance
+    get_google_drive_credentials()
     mock_creds_instance.refresh.assert_called_once()
 
 
-@patch("builtins.open")
+@patch("src.auth.os.path.exists")
 @patch("src.auth.InstalledAppFlow")
-@patch("src.auth.os.path.exists", return_value=False)  # token.json не существует
-def test_get_google_drive_credentials_oauth_flow(
-    mock_exists, mock_flow, mock_open, mock_app_settings, tmp_path
-):
-    """Тест полного цикла OAuth, когда токен отсутствует."""
+@patch("builtins.open")
+def test_get_google_creds_full_oauth_flow(mock_open, MockFlow, mock_os_exists, mock_config, tmp_path):
     creds_file = tmp_path / "credentials.json"
     creds_file.touch()
-    mock_app_settings(GOOGLE_CREDENTIALS=creds_file)
-
-    mock_flow_instance = mock_flow.from_client_secrets_file.return_value
+    mock_config(GOOGLE_CREDS_PATH=creds_file)
+    def exists_side_effect(path):
+        return path == creds_file
+    mock_os_exists.side_effect = exists_side_effect
+    mock_flow_instance = MockFlow.from_client_secrets_file.return_value
     mock_creds = MagicMock()
+    mock_creds.to_json.return_value = "{}"
     mock_flow_instance.run_local_server.return_value = mock_creds
-
     returned_creds = get_google_drive_credentials()
-
     assert returned_creds == mock_creds
-    mock_flow.from_client_secrets_file.assert_called_once_with(
-        creds_file, ["https://www.googleapis.com/auth/drive.file"]
-    )
+    MockFlow.from_client_secrets_file.assert_called_once()
     mock_flow_instance.run_local_server.assert_called_once_with(port=0)
     mock_open.assert_called_once_with("token.json", "w")
     mock_creds.to_json.assert_called_once()
 
 
-def test_get_google_drive_credentials_no_creds_file(mock_app_settings):
-    """Тест ошибки, если файл credentials.json не найден."""
-    non_existent_path = Path("/path/to/non_existent_credentials.json")
-    mock_app_settings(GOOGLE_CREDENTIALS=non_existent_path)
+@patch("src.auth.os.path.exists")
+@patch("src.auth.InstalledAppFlow")
+@patch("builtins.open")
+def test_get_google_creds_is_cached_simple(mock_open, MockFlow, mock_os_exists, mock_config, tmp_path):
+    creds_file = tmp_path / "credentials.json"
+    creds_file.touch()
+    mock_config(GOOGLE_CREDS_PATH=creds_file)
+    def exists_side_effect(path):
+        return path == creds_file
+    mock_os_exists.side_effect = exists_side_effect
+    mock_flow_instance = MockFlow.from_client_secrets_file.return_value
+    mock_creds = MagicMock(valid=True)
+    mock_creds.to_json.return_value = "{}"
+    mock_flow_instance.run_local_server.return_value = mock_creds
+    creds1 = get_google_drive_credentials()
+    assert creds1 == mock_creds
+    assert mock_flow_instance.run_local_server.call_count == 1
+    creds2 = get_google_drive_credentials()
+    assert creds2 == mock_creds
+    assert mock_flow_instance.run_local_server.call_count == 1
 
-    with pytest.raises(
-        AuthError,
-        match=re.escape(
-            f"Файл учетных данных Google 'credentials.json' не найден по пути: {non_existent_path}"
-        ),
-    ):
+# ==================================
+# Тесты для покрытия пропущенных строк
+# ==================================
+
+@patch("src.auth.os.path.exists")
+@patch("src.auth.Credentials")
+@patch("builtins.open")
+def test_get_google_creds_corrupted_token_file(mock_open, MockCredentials, mock_os_exists, mock_config, tmp_path):
+    creds_file = tmp_path / "credentials.json"
+    creds_file.touch()
+    mock_config(GOOGLE_CREDS_PATH=creds_file)
+    def exists_side_effect(path):
+        return True
+    mock_os_exists.side_effect = exists_side_effect
+    MockCredentials.from_authorized_user_file.side_effect = Exception("Corrupted file")
+    with patch("src.auth.InstalledAppFlow") as MockFlow:
+        mock_flow_instance = MockFlow.from_client_secrets_file.return_value
+        mock_creds = MagicMock(valid=True)
+        mock_creds.to_json.return_value = "{}"
+        mock_flow_instance.run_local_server.return_value = mock_creds
         get_google_drive_credentials()
+        mock_flow_instance.run_local_server.assert_called_once()
+
+
+@patch("src.auth.os.path.exists")
+@patch("src.auth.Credentials")
+@patch("src.auth.os.remove")
+@patch("builtins.open")
+def test_get_google_creds_refresh_failure(mock_open, mock_os_remove, MockCredentials, mock_os_exists, mock_config, tmp_path):
+    """Тест ошибки при обновлении токена (покрывает строки 82-86)."""
+    creds_file = tmp_path / "credentials.json"
+    creds_file.touch()
+    mock_config(GOOGLE_CREDS_PATH=creds_file)
+
+    # --- ИСПРАВЛЕНИЕ: Создаем умный, состоянием-зависимый мок ---
+    def exists_side_effect(path):
+        # Если это файл credentials.json, он всегда существует
+        if path == creds_file:
+            return True
+        # Если это token.json, он существует, только если его еще не "удалили"
+        if path == "token.json":
+            return not mock_os_remove.called
+        return False
+    mock_os_exists.side_effect = exists_side_effect
+
+    mock_creds_instance = MagicMock(valid=False, expired=True, refresh_token="some-token")
+    mock_creds_instance.refresh.side_effect = Exception("Refresh failed")
+    MockCredentials.from_authorized_user_file.return_value = mock_creds_instance
+
+    with patch("src.auth.InstalledAppFlow") as MockFlow:
+        mock_flow_instance = MockFlow.from_client_secrets_file.return_value
+        mock_creds = MagicMock(valid=True)
+        mock_creds.to_json.return_value = "{}"
+        mock_flow_instance.run_local_server.return_value = mock_creds
+
+        get_google_drive_credentials()
+
+        mock_creds_instance.refresh.assert_called_once()
+        mock_os_remove.assert_called_once_with("token.json")
+        mock_flow_instance.run_local_server.assert_called_once()

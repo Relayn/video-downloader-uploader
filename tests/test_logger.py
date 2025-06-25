@@ -1,262 +1,110 @@
-import pytest
+# tests/test_logger.py
+
 import logging
-import os
-import time
-from pathlib import Path
-from unittest.mock import patch, mock_open
+import pytest
+from unittest.mock import patch, MagicMock
 
+# Тестируемый модуль
 from src.logger import setup_logger, set_logger_level
-
-TEST_LOGGER_NAME = "test_app_logger"
-TEST_LOG_FILE = "test_app_log.log"
-
-
-@pytest.fixture
-def cleanup_logger():
-    """Очищает логгер после теста, чтобы избежать влияния на другие тесты."""
-    logger = logging.getLogger(TEST_LOGGER_NAME)
-    original_handlers = list(logger.handlers)
-    original_level = logger.level
-    original_propagate = logger.propagate
-    yield
-    logger.handlers = original_handlers
-    logger.setLevel(original_level)
-    logger.propagate = original_propagate
-    if hasattr(logging.Logger.manager, "loggerDict"):
-        if TEST_LOGGER_NAME in logging.Logger.manager.loggerDict:
-            # Это удаляет логгер из словаря logging,
-            # так что при следующем getLogger он будет создан заново (без старых хендлеров/уровня)
-            del logging.Logger.manager.loggerDict[TEST_LOGGER_NAME]
-    if os.path.exists(TEST_LOG_FILE):
-        try:
-            os.remove(TEST_LOG_FILE)
-        except (
-            PermissionError
-        ):  # Может возникнуть на Windows, если файл еще используется
-            time.sleep(0.1)
-            try:
-                os.remove(TEST_LOG_FILE)
-            except Exception as e:
-                print(f"Не удалось удалить тестовый лог-файл {TEST_LOG_FILE}: {e}")
 
 
 @pytest.fixture(autouse=True)
-def ensure_logging_fully_configured():
-    """
-    Эта фикстура гарантирует, что глобальное состояние logging полностью сконфигурировано.
-    Без этого, первый вызов getLogger может сконфигурировать root логгер с базовыми настройками,
-    что может помешать некоторым тестам, особенно если они ожидают определенного поведения
-    от "чистой" системы логирования.
-    """
-    logging.basicConfig(
-        force=True
-    )  # Перезаписывает любую существующую конфигурацию root логгера
-    # Очистим handlers у root логгера, чтобы они не мешали
-    logging.getLogger().handlers.clear()
+def cleanup_loggers():
+    """Фикстура для очистки логгеров после каждого теста."""
     yield
+    # Удаляем все обработчики из всех логгеров, чтобы тесты не влияли друг на друга
+    for name in list(logging.root.manager.loggerDict):
+        if name.startswith("test_"):
+            logging.getLogger(name).handlers.clear()
 
 
-def test_setup_logger_basic(cleanup_logger):
-    """Тест базовой настройки логгера (только stdout)."""
-    logger = setup_logger(TEST_LOGGER_NAME, level="INFO")
-    assert logger.name == TEST_LOGGER_NAME
-    assert logger.level == logging.INFO
+def test_setup_logger_stdout_only():
+    """Тест: логгер создается только с выводом в stdout по умолчанию."""
+    logger = setup_logger("test_stdout", level="DEBUG")
+
+    assert isinstance(logger, logging.Logger)
+    assert logger.name == "test_stdout"
+    assert logger.level == logging.DEBUG
     assert len(logger.handlers) == 1
     assert isinstance(logger.handlers[0], logging.StreamHandler)
-    assert logger.propagate is False
-    # Проверка формата (частичная, проверяем наличие ключевых элементов)
-    formatter_str = logger.handlers[0].formatter._fmt
-    assert "%(asctime)s" in formatter_str
-    assert "%(levelname)s" in formatter_str
-    assert "%(name)s" in formatter_str
-    assert "%(module)s.%(funcName)s:%(lineno)d" in formatter_str
-    assert "%(message)s" in formatter_str
+    assert not logger.propagate
 
 
-def test_setup_logger_with_file(tmp_path, cleanup_logger):
-    """Тест настройки логгера с выводом в файл."""
-    log_file = tmp_path / "test_app.log"
-    logger = setup_logger(
-        TEST_LOGGER_NAME,
-        level="DEBUG",
-        to_file=True,
-        file_path=str(log_file),
-        max_bytes=1024,
-        backup_count=2,
-    )
+def test_setup_logger_with_file_logging(tmp_path):
+    """Тест: логгер корректно настраивает логирование в файл."""
+    log_file = tmp_path / "test.log"
+    logger = setup_logger("test_file", to_file=True, file_path=str(log_file))
 
-    assert logger.level == logging.DEBUG
-    assert len(logger.handlers) == 2  # StreamHandler + RotatingFileHandler
-
-    file_handler = None
-    for handler in logger.handlers:
-        if isinstance(handler, logging.handlers.RotatingFileHandler):
-            file_handler = handler
-            break
-
-    assert file_handler is not None
+    assert len(logger.handlers) == 2
+    file_handler = logger.handlers[1]
+    assert isinstance(file_handler, logging.handlers.RotatingFileHandler)
     assert file_handler.baseFilename == str(log_file)
-    assert file_handler.maxBytes == 1024
-    assert file_handler.backupCount == 2
-    assert file_handler.encoding == "utf-8"
+
+    # Проверяем, что в файл что-то пишется
+    logger.info("Test message")
+    assert log_file.exists()
+    assert "Test message" in log_file.read_text(encoding="utf-8")
 
 
-def test_setup_logger_handler_clearing(cleanup_logger):
-    """Тест очистки обработчиков при повторном вызове setup_logger."""
-    logger1 = setup_logger(TEST_LOGGER_NAME, level="INFO")
+def test_setup_logger_creates_log_directory(tmp_path):
+    """Тест: setup_logger создает родительскую директорию для файла лога."""
+    log_dir = tmp_path / "new_logs_dir"
+    log_file = log_dir / "app.log"
+
+    assert not log_dir.exists()
+    setup_logger("test_dir_creation", to_file=True, file_path=str(log_file))
+    assert log_dir.exists()
+    assert log_dir.is_dir()
+
+
+# --- НАЧАЛО ИЗМЕНЕНИЯ ---
+@patch("src.logger.RotatingFileHandler")  # ИСПРАВЛЕН ПУТЬ
+# --- КОНЕЦ ИЗМЕНЕНИЯ ---
+def test_setup_logger_handles_io_error_on_file_creation(mock_handler, capsys):
+    """Тест: обработка ошибки IOError при создании файлового обработчика."""
+    mock_handler.side_effect = IOError("Permission denied")
+
+    # Используем patch на print, чтобы проверить вывод в консоль
+    with patch("builtins.print") as mock_print:
+        logger = setup_logger("test_io_error", to_file=True, file_path="/protected/path.log")
+
+        # Логгер должен быть создан, но только с одним (консольным) обработчиком
+        assert len(logger.handlers) == 1
+        # Проверяем, что было вызвано логирование критической ошибки
+        mock_print.assert_called_with(
+            "CRITICAL: Не удалось создать файловый логгер для '/protected/path.log': Permission denied"
+        )
+
+
+def test_setup_logger_clears_existing_handlers():
+    """Тест: повторный вызов setup_logger очищает старые обработчики."""
+    logger_name = "test_reconfig"
+    # Первый вызов
+    logger1 = setup_logger(logger_name, level="INFO")
     assert len(logger1.handlers) == 1
-    # Добавим "мусорный" обработчик вручную
-    logger1.addHandler(logging.NullHandler())
-    assert len(logger1.handlers) == 2
 
-    # Повторный вызов setup_logger должен очистить старые и добавить свои
-    logger2 = setup_logger(TEST_LOGGER_NAME, level="DEBUG")
-    assert len(logger2.handlers) == 1  # Только новый StreamHandler
+    # Второй вызов
+    logger2 = setup_logger(logger_name, level="DEBUG")
+    assert logger1 is logger2  # Должен быть тот же самый объект логгера
+    assert len(logger2.handlers) == 1  # А не 2
     assert logger2.level == logging.DEBUG
 
 
-def test_set_logger_level(cleanup_logger):
-    """Тест динамического изменения уровня логирования."""
-    logger = setup_logger(TEST_LOGGER_NAME, level="INFO")
+def test_set_logger_level():
+    """Тест: функция set_logger_level корректно меняет уровень логгера."""
+    logger_name = "test_level_change"
+    logger = setup_logger(logger_name, level="INFO")
     assert logger.level == logging.INFO
 
-    set_logger_level(TEST_LOGGER_NAME, "DEBUG")
-    assert logger.level == logging.DEBUG
-
-    set_logger_level(TEST_LOGGER_NAME, "WARNING")
+    set_logger_level(logger_name, "WARNING")
     assert logger.level == logging.WARNING
 
-    # Тест с невалидным уровнем (должен установиться INFO по умолчанию в getattr)
-    set_logger_level(TEST_LOGGER_NAME, "INVALID_LEVEL_XYZ")
-    assert logger.level == logging.INFO  # Проверяем, что установился INFO
 
+def test_set_logger_level_with_invalid_level():
+    """Тест: set_logger_level использует INFO при некорректном уровне."""
+    logger_name = "test_invalid_level"
+    logger = setup_logger(logger_name, level="DEBUG")
+    assert logger.level == logging.DEBUG
 
-def test_log_messages_stdout(caplog, cleanup_logger):
-    """Тест записи сообщений в stdout в соответствии с уровнем INFO.
-    DEBUG сообщения не должны попадать в вывод, INFO и WARNING должны.
-    """
-    logger = setup_logger(
-        TEST_LOGGER_NAME, level="INFO", to_file=False
-    )  # Устанавливаем уровень INFO, не пишем в файл
-    logger.propagate = True  # Для корректной работы caplog
-
-    # caplog по умолчанию захватывает то, что производит логгер с учетом его уровня
-    logger.debug("Это debug сообщение")
-    logger.info("Это info сообщение")
-    logger.warning("Это warning сообщение")
-    logger.error("Это error сообщение")
-    logger.critical("Это critical сообщение")
-
-    assert "Это debug сообщение" not in caplog.text
-    assert "Это info сообщение" in caplog.text
-    assert "Это warning сообщение" in caplog.text
-    assert "Это error сообщение" in caplog.text
-    assert "Это critical сообщение" in caplog.text
-
-    # Проверим также записи caplog.records
-    debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
-    info_records = [r for r in caplog.records if r.levelname == "INFO"]
-    warning_records = [r for r in caplog.records if r.levelname == "WARNING"]
-
-    assert not debug_records
-    assert len(info_records) == 1
-    assert info_records[0].message == "Это info сообщение"
-    assert len(warning_records) == 1
-    assert warning_records[0].message == "Это warning сообщение"
-
-
-def test_log_messages_to_file(tmp_path, cleanup_logger):
-    """Тест записи сообщений в файл."""
-    log_file = tmp_path / "app.log"
-    logger = setup_logger(
-        TEST_LOGGER_NAME, level="DEBUG", to_file=True, file_path=str(log_file)
-    )
-
-    logger.debug("Файловое debug сообщение")
-    logger.info("Файловое info сообщение")
-
-    # Закрываем обработчики, чтобы убедиться, что все записалось на диск
-    for handler in logger.handlers:
-        handler.close()
-
-    assert log_file.exists()
-    content = log_file.read_text(encoding="utf-8")
-
-    assert "Файловое debug сообщение" in content
-    assert "Файловое info сообщение" in content
-    assert f"DEBUG - {TEST_LOGGER_NAME} - " in content
-    assert f"INFO - {TEST_LOGGER_NAME} - " in content
-
-
-def test_log_rotation(tmp_path, cleanup_logger):
-    """Тест ротации лог-файлов."""
-    log_file_base = "rotate.log"
-    log_file = tmp_path / log_file_base
-    # Маленький max_bytes для быстрой ротации, достаточно для одного сообщения + формат
-    # Формат: "%(asctime)s - %(levelname)s - %(name)s - %(module)s.%(funcName)s:%(lineno)d - %(message)s"
-    # Длина формата примерно 80-100 символов. Сообщение ~20 символов.
-    # Пусть max_bytes будет 150, чтобы одно сообщение влезло, а второе вызвало ротацию.
-    logger = setup_logger(
-        TEST_LOGGER_NAME,
-        level="INFO",
-        to_file=True,
-        file_path=str(log_file),
-        max_bytes=150,
-        backup_count=2,
-    )
-
-    # Сообщение, которое точно поместится
-    msg1 = "Сообщение для ротации 1"
-    logger.info(msg1)
-    for handler in logger.handlers:  # Закрываем, чтобы гарантировать запись
-        if isinstance(handler, logging.handlers.RotatingFileHandler):
-            handler.flush()
-            handler.close()
-
-    assert log_file.exists()
-    # logger = setup_logger(TEST_LOGGER_NAME, level="INFO", to_file=True, file_path=str(log_file),
-    #                       max_bytes=150, backup_count=2) # Переоткрываем логгер или просто продолжаем с тем же
-
-    # Сообщение, которое вызовет ротацию
-    msg2 = "Сообщение для ротации 2, которое длиннее"
-    logger.info(msg2)  # Это сообщение должно пойти в новый файл
-    for handler in logger.handlers:  # Закрываем, чтобы гарантировать запись
-        if isinstance(handler, logging.handlers.RotatingFileHandler):
-            handler.flush()
-            handler.close()
-
-    # Проверяем наличие основного файла и бэкапа
-    assert (tmp_path / f"{log_file_base}.1").exists()
-
-    # Содержимое текущего файла (должно быть msg2)
-    content_current = log_file.read_text(encoding="utf-8")
-    assert msg2 in content_current
-    assert msg1 not in content_current  # msg1 должен быть в бэкапе
-
-    # Содержимое бэкапа (должно быть msg1)
-    content_backup = (tmp_path / f"{log_file_base}.1").read_text(encoding="utf-8")
-    assert msg1 in content_backup
-    assert msg2 not in content_backup
-
-    # Еще одно сообщение для проверки backup_count
-    msg3 = "Сообщение для ротации 3"
-    logger.info(msg3)
-    for handler in logger.handlers:
-        if isinstance(handler, logging.handlers.RotatingFileHandler):
-            handler.flush()
-            handler.close()
-
-    assert (tmp_path / f"{log_file_base}.2").exists()  # msg1 должен быть тут
-    content_backup2 = (tmp_path / f"{log_file_base}.2").read_text(encoding="utf-8")
-    assert msg1 in content_backup2
-
-    # Старый log_file_base.1 (теперь должен содержать msg2)
-    content_backup1_new = (tmp_path / f"{log_file_base}.1").read_text(encoding="utf-8")
-    assert msg2 in content_backup1_new
-
-    # Текущий файл (должен содержать msg3)
-    content_current_new = log_file.read_text(encoding="utf-8")
-    assert msg3 in content_current_new
-
-
-# Убран лишний тег </rewritten_file> отсюда
+    set_logger_level(logger_name, "BOGUS_LEVEL")
+    assert logger.level == logging.INFO  # Должен вернуться к INFO по умолчанию

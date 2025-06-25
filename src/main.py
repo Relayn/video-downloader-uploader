@@ -1,11 +1,16 @@
+# src/main.py
 import argparse
 import sys
+import asyncio
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from src.config import get_config, setup_logger, ConfigError
+from src.config import get_config, ConfigError
+from src.logger import setup_logger
 from src.downloader import download_video
 from src.gui import main as show_gui
-from src.uploader import upload_to_google_drive, upload_to_yandex_disk
+# --- ЭТО ИСПРАВЛЕННЫЙ ИМПОРТ ---
+from src.uploader import upload_single_file, UPLOADER_STRATEGIES
 
 
 def main():
@@ -13,15 +18,20 @@ def main():
     parser = argparse.ArgumentParser(description="Скачивание и загрузка видео.")
     parser.add_argument("--url", help="URL видео для скачивания.")
     parser.add_argument(
-        "--cloud", choices=["google", "yandex"], help="Облачное хранилище."
+        "--cloud", choices=UPLOADER_STRATEGIES.keys(), help="Облачное хранилище."
     )
     parser.add_argument("--path", help="Путь для загрузки в облаке.")
     args = parser.parse_args()
 
-    if not any(vars(args).values()):
-        # Если аргументы не переданы, запускаем GUI
+    # Если URL не передан, и другие аргументы тоже, запускаем GUI
+    if not args.url and len(sys.argv) == 1:
         show_gui()
-        sys.exit()
+        sys.exit(0) # Выходим после закрытия GUI
+
+    # Если переданы другие аргументы, но не URL - это ошибка
+    if not args.url:
+        print("Ошибка: аргумент --url обязателен для режима CLI.", file=sys.stderr)
+        sys.exit(1)
 
     # Если аргументы переданы, выполняем логику CLI
     try:
@@ -37,40 +47,37 @@ def main():
         file_path=config.LOG_FILE_PATH,
     )
 
-    if not args.url:
-        logger.error("Аргумент --url обязателен для режима CLI.")
-        sys.exit(1)
-
-    from tempfile import TemporaryDirectory
-
-    with TemporaryDirectory(prefix=config.TEMP_DIR_PREFIX) as temp_dir:
+    with TemporaryDirectory(prefix="vdu_cli_") as temp_dir_str:
+        temp_dir = Path(temp_dir_str)
         logger.info(f"Временная папка создана: {temp_dir}")
         try:
-            downloaded_file = download_video(args.url, Path(temp_dir))
-            if not downloaded_file:
-                raise Exception("Скачивание не удалось, файл не был получен.")
+            download_result = download_video(args.url, temp_dir)
+            if download_result["status"] != "успех":
+                raise Exception(f"Скачивание не удалось: {download_result.get('error', 'Неизвестная ошибка')}")
 
-            filename = downloaded_file.name
+            downloaded_file_path = download_result["path"]
+            filename = downloaded_file_path.name
             cloud_path = args.path or ""
 
-            if args.cloud == "google":
-                logger.info("Загрузка на Google Drive...")
-                upload_to_google_drive(downloaded_file, cloud_path, filename)
-            elif args.cloud == "yandex":
-                logger.info("Загрузка на Яндекс.Диск...")
+            if args.cloud:
+                logger.info(f"Загрузка в '{args.cloud}'...")
+                task = {
+                    "file_path": str(downloaded_file_path),
+                    "cloud_storage": args.cloud,
+                    "cloud_folder_path": cloud_path,
+                    "filename": filename,
+                }
                 # Запускаем асинхронную функцию
-                import asyncio
-
-                asyncio.run(
-                    upload_to_yandex_disk(downloaded_file, cloud_path, filename)
-                )
+                upload_result = asyncio.run(upload_single_file(task))
+                if upload_result["status"] != "успех":
+                    raise Exception(f"Загрузка не удалась: {upload_result.get('error', 'Неизвестная ошибка')}")
+                logger.info(f"Файл успешно загружен. URL/Path: {upload_result.get('url') or upload_result.get('path')}")
             else:
-                logger.warning("Облако не выбрано, файл только скачан.")
+                logger.warning(f"Облако не выбрано, файл только скачан и сохранен в: {downloaded_file_path}")
 
         except Exception as e:
             logger.critical(f"Критическая ошибка в режиме CLI: {e}", exc_info=True)
             sys.exit(1)
 
-
 if __name__ == "__main__":
-    main()
+    main()  # pragma: no cover

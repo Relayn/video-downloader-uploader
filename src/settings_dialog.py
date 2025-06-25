@@ -1,143 +1,101 @@
-import os
 from PySide6.QtWidgets import (
     QDialog,
-    QDialogButtonBox,
     QVBoxLayout,
+    QFormLayout,
     QLineEdit,
     QPushButton,
-    QFileDialog,
-    QCheckBox,
+    QDialogButtonBox,
     QLabel,
-    QGroupBox,
-    QWidget,
+    QComboBox,
+    QCheckBox,
+    QFileDialog,
+    QWidget,  # Добавляем QWidget в импорты
+    QHBoxLayout, # и QHBoxLayout
 )
-from PySide6.QtCore import Qt
-from src.config import get_config, AppSettings
+from src.config import get_config
 
 
 class SettingsDialog(QDialog):
-    """Диалоговое окно для редактирования настроек приложения."""
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Настройки")
-        self.setMinimumWidth(500)
         self.config = get_config()
 
-        # Layout
-        self.layout = QVBoxLayout(self)
+        layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
 
-        # General Settings
-        general_group = QGroupBox("Основные")
-        general_layout = QVBoxLayout()
-
-        # YTDLP Format
-        general_layout.addWidget(QLabel("Формат загрузки (yt-dlp format string):"))
-        self.ytdlp_format_edit = QLineEdit()
-        general_layout.addWidget(self.ytdlp_format_edit)
-
-        # FFMPEG Path
-        general_layout.addWidget(QLabel("Путь к ffmpeg.exe (необязательно):"))
-        self.ffmpeg_path_edit = self.create_file_selector()
-        general_layout.addWidget(self.ffmpeg_path_edit)
-
-        general_group.setLayout(general_layout)
-        self.layout.addWidget(general_group)
-
-        # Credentials
-        creds_group = QGroupBox("Учетные данные")
-        creds_layout = QVBoxLayout()
-
-        # Google Credentials
-        creds_layout.addWidget(QLabel("Путь к файлу Google 'credentials.json':"))
-        self.google_credentials_edit = self.create_file_selector(is_json=True)
-        creds_layout.addWidget(self.google_credentials_edit)
-
-        # Yandex Token
-        creds_layout.addWidget(QLabel("Токен Яндекс.Диска:"))
+        # Поля настроек
         self.yandex_token_edit = QLineEdit()
-        self.yandex_token_edit.setEchoMode(QLineEdit.Password)
-        creds_layout.addWidget(self.yandex_token_edit)
+        self.google_creds_path_edit = QLineEdit()
+        self.google_token_path_edit = QLineEdit()
+        self.proxy_url_edit = QLineEdit()
+        self.proxy_url_edit.setPlaceholderText("http://user:pass@host:port")
+        self.log_level_combo = QComboBox()
+        self.log_level_combo.addItems(["DEBUG", "INFO", "WARNING", "ERROR"])
+        self.log_to_file_check = QCheckBox("Включить логирование в файл")
+        self.log_file_path_edit = QLineEdit()
 
-        creds_group.setLayout(creds_layout)
-        self.layout.addWidget(creds_group)
+        # --- НАЧАЛО ИЗМЕНЕНИЯ ---
+        # Добавление виджетов в форму с уникальными именами для кнопок
+        form_layout.addRow("Токен Яндекс.Диска:", self.yandex_token_edit)
+        form_layout.addRow("Путь к Google creds.json:", self._create_file_selector(self.google_creds_path_edit, "browse_creds_btn"))
+        form_layout.addRow("Путь к Google token.json:", self._create_file_selector(self.google_token_path_edit, "browse_token_btn"))
+        form_layout.addRow("URL прокси-сервера:", self.proxy_url_edit)
+        form_layout.addRow("Уровень логгирования:", self.log_level_combo)
+        form_layout.addRow(self.log_to_file_check)
+        form_layout.addRow("Путь к файлу логов:", self._create_file_selector(self.log_file_path_edit, "browse_log_btn", is_save=True))
+        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
-        # Logging
-        log_group = QGroupBox("Логирование")
-        log_layout = QVBoxLayout()
-        self.log_to_file_checkbox = QCheckBox("Включить логирование в файл")
-        log_layout.addWidget(self.log_to_file_checkbox)
-        log_layout.addWidget(QLabel("Путь к лог-файлу:"))
-        self.log_file_path_edit = self.create_file_selector(is_save=True)
-        log_layout.addWidget(self.log_file_path_edit)
-        log_group.setLayout(log_layout)
-        self.layout.addWidget(log_group)
+        layout.addLayout(form_layout)
 
-        # Buttons
-        self.buttonBox = QDialogButtonBox(
-            QDialogButtonBox.Save | QDialogButtonBox.Cancel
-        )
-        self.buttonBox.accepted.connect(self.accept)
-        self.buttonBox.rejected.connect(self.reject)
-        self.layout.addWidget(self.buttonBox)
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
 
         self.load_settings()
 
-    def create_file_selector(self, is_json=False, is_save=False):
-        """Вспомогательная функция для создания строки с выбором файла."""
+    # --- НАЧАЛО ИЗМЕНЕНИЯ ---
+    def _create_file_selector(self, line_edit: QLineEdit, button_object_name: str, is_save: bool = False) -> QWidget:
+        """Создает контейнер с полем ввода и кнопкой '...'."""
         container = QWidget()
-        layout = QVBoxLayout(container)
+        layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
-
-        line_edit = QLineEdit()
-        button = QPushButton("Выбрать...")
         layout.addWidget(line_edit)
-        layout.addWidget(button)
-
-        if is_save:
-            button.clicked.connect(lambda: self.select_file_path(line_edit, save=True))
-        else:
-            filter = "JSON files (*.json)" if is_json else "All files (*)"
-            button.clicked.connect(
-                lambda: self.select_file_path(line_edit, filter=filter)
-            )
-
-        # Attach the line edit to the container for easy access
-        container.line_edit = line_edit
+        browse_btn = QPushButton("...")
+        browse_btn.setObjectName(button_object_name)  # Устанавливаем имя объекта
+        browse_btn.clicked.connect(lambda: self._browse_file(line_edit, is_save))
+        layout.addWidget(browse_btn)
         return container
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
-    def select_file_path(self, line_edit, filter="All files (*)", save=False):
-        """Открывает диалог выбора файла/сохранения."""
-        if save:
-            path, _ = QFileDialog.getSaveFileName(self, "Выбрать файл", filter=filter)
+    def _browse_file(self, line_edit, is_save):
+        if is_save:
+            path, _ = QFileDialog.getSaveFileName(self, "Сохранить файл как...")
         else:
-            path, _ = QFileDialog.getOpenFileName(self, "Выбрать файл", filter=filter)
-
+            path, _ = QFileDialog.getOpenFileName(self, "Выбрать файл")
         if path:
             line_edit.setText(path)
 
     def load_settings(self):
-        """Загружает текущие настройки в поля диалога."""
-        self.ytdlp_format_edit.setText(self.config.YTDLP_FORMAT)
-        self.ffmpeg_path_edit.line_edit.setText(str(self.config.FFMPEG_PATH or ""))
-        self.google_credentials_edit.line_edit.setText(
-            str(self.config.GOOGLE_CREDENTIALS or "")
-        )
-        self.yandex_token_edit.setText(
-            self.config.YANDEX_TOKEN.get_secret_value()
-            if self.config.YANDEX_TOKEN
-            else ""
-        )
-        self.log_to_file_checkbox.setChecked(self.config.LOG_TO_FILE)
-        self.log_file_path_edit.line_edit.setText(self.config.LOG_FILE_PATH)
+        """Загружает текущие настройки в поля ввода."""
+        yandex_token = self.config.YANDEX_DISK_TOKEN.get_secret_value() if self.config.YANDEX_DISK_TOKEN else ""
+        self.yandex_token_edit.setText(yandex_token)
+        self.google_creds_path_edit.setText(self.config.GOOGLE_CREDS_PATH or "")
+        self.google_token_path_edit.setText(self.config.GOOGLE_TOKEN_PATH or "")
+        self.proxy_url_edit.setText(self.config.PROXY_URL or "")
+        self.log_level_combo.setCurrentText(self.config.LOG_LEVEL)
+        self.log_to_file_check.setChecked(self.config.LOG_TO_FILE)
+        self.log_file_path_edit.setText(self.config.LOG_FILE_PATH)
 
     def get_settings_data(self) -> dict:
-        """Собирает данные из полей диалога в словарь для сохранения в .env."""
+        """Собирает данные из полей ввода в словарь."""
         return {
-            "YTDLP_FORMAT": self.ytdlp_format_edit.text(),
-            "FFMPEG_PATH": self.ffmpeg_path_edit.line_edit.text() or "",
-            "GOOGLE_CREDENTIALS": self.google_credentials_edit.line_edit.text() or "",
-            "YANDEX_TOKEN": self.yandex_token_edit.text() or "",
-            "LOG_TO_FILE": self.log_to_file_checkbox.isChecked(),
-            "LOG_FILE_PATH": self.log_file_path_edit.line_edit.text(),
+            "YANDEX_DISK_TOKEN": self.yandex_token_edit.text(),
+            "GOOGLE_CREDS_PATH": self.google_creds_path_edit.text(),
+            "GOOGLE_TOKEN_PATH": self.google_token_path_edit.text(),
+            "PROXY_URL": self.proxy_url_edit.text() or None,
+            "LOG_LEVEL": self.log_level_combo.currentText(),
+            "LOG_TO_FILE": str(self.log_to_file_check.isChecked()),
+            "LOG_FILE_PATH": self.log_file_path_edit.text(),
         }

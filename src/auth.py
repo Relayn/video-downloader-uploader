@@ -1,127 +1,98 @@
-from typing import Optional
 import os
-import time
+import sys
+from typing import Optional
+
+from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
+from pydantic import SecretStr
+
 from src.config import get_config
 from src.logger import setup_logger
 
-# Инициализация логгера вынесена на уровень модуля
-config = get_config()
-logger = setup_logger(
-    "auth",
-    level=config.LOG_LEVEL,
-    to_file=config.LOG_TO_FILE,
-    file_path=config.LOG_FILE_PATH,
-)
+logger = setup_logger("auth")
 
-# Кеш в памяти для учетных данных на время сессии
+# Кеш для учетных данных, чтобы не пересоздавать их при каждом вызове
 _yandex_token_cache: Optional[str] = None
 _google_creds_cache: Optional[Credentials] = None
 
 
 class AuthError(Exception):
     """Пользовательское исключение для ошибок аутентификации."""
-
     pass
 
 
 def get_yandex_token() -> str:
     """
-    Получает токен Яндекс.Диска из конфигурации с кешированием в памяти.
-
-    Returns:
-        Токен в виде строки.
-
-    Raises:
-        AuthError: Если токен не найден в конфигурации.
+    Возвращает токен Яндекс.Диска из конфигурации.
+    Кеширует результат для последующих вызовов.
     """
     global _yandex_token_cache
     if _yandex_token_cache:
-        logger.debug("Возврат кешированного токена Yandex.")
         return _yandex_token_cache
 
-    logger.debug("Попытка получить токен Yandex из конфигурации.")
-    yandex_token_secret = get_config().YANDEX_TOKEN
+    config = get_config()
+    token_secret = config.YANDEX_DISK_TOKEN
+    if not token_secret:
+        raise AuthError("YANDEX_DISK_TOKEN не найден в конфигурации (.env).")
 
-    if yandex_token_secret:
-        token = yandex_token_secret.get_secret_value()
-        _yandex_token_cache = token
-        logger.info("Токен Яндекс.Диска успешно получен и кеширован.")
-        return token
-
-    logger.error("YANDEX_TOKEN не найден в конфигурации.")
-    raise AuthError("YANDEX_TOKEN не найден в конфигурации.")
+    token = token_secret.get_secret_value()
+    _yandex_token_cache = token
+    logger.info("Токен Яндекс.Диска успешно загружен.")
+    return token
 
 
 def get_google_drive_credentials() -> Credentials:
     """
-    Получает и кеширует учетные данные Google Drive.
-
-    Проверяет наличие `token.json`, и если он невалиден или отсутствует,
-    запускает процесс OAuth2 авторизации.
-
-    Returns:
-        Объект `Credentials`.
-
-    Raises:
-        AuthError: Если не удалось получить учетные данные.
+    Управляет получением учетных данных Google Drive.
+    - Пытается загрузить из token.json.
+    - Если токен истек, обновляет его.
+    - Если token.json нет, запускает полный цикл OAuth 2.0.
+    - Кеширует результат.
     """
     global _google_creds_cache
     if _google_creds_cache and _google_creds_cache.valid:
-        logger.debug("Возврат кешированных учетных данных Google.")
         return _google_creds_cache
 
     config = get_config()
-    creds_path = config.GOOGLE_CREDENTIALS
+    creds = None
+    token_path = "token.json"
+    creds_path = config.GOOGLE_CREDS_PATH
 
-    if not creds_path or not creds_path.exists():
+    if not creds_path or not os.path.exists(creds_path):
         raise AuthError(
             f"Файл учетных данных Google 'credentials.json' не найден по пути: {creds_path}"
         )
 
-    SCOPES = ["https://www.googleapis.com/auth/drive.file"]
-    creds = None
-    token_file = "token.json"
-
-    if os.path.exists(token_file):
+    # Файл token.json хранит access и refresh токены пользователя.
+    # Он создается автоматически при первом успешном входе.
+    if os.path.exists(token_path):
         try:
-            creds = Credentials.from_authorized_user_file(token_file, SCOPES)
-            logger.debug(f"Учетные данные загружены из {token_file}")
+            creds = Credentials.from_authorized_user_file(token_path, scopes=["https://www.googleapis.com/auth/drive"])
         except Exception as e:
-            logger.warning(
-                f"Не удалось загрузить {token_file}: {e}. Потребуется новая авторизация."
-            )
+            logger.warning(f"Не удалось загрузить token.json: {e}. Потребуется повторная авторизация.")
             creds = None
 
+    # Если учетных данных нет или они невалидны, позволяем пользователю войти.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
+            logger.info("Токен Google истек, обновляем...")
             try:
-                logger.info("Обновление истекшего токена Google Drive...")
                 creds.refresh(Request())
             except Exception as e:
-                logger.error(
-                    f"Ошибка обновления токена: {e}. Потребуется новая авторизация."
-                )
-                creds = None  # Сброс для повторной аутентификации
+                logger.error(f"Не удалось обновить токен Google: {e}", exc_info=True)
+                # Если обновление не удалось, удаляем старый токен и проходим авторизацию заново
+                os.remove(token_path)
+                return get_google_drive_credentials()
+        else:
+            logger.info("Требуется авторизация Google Drive...")
+            flow = InstalledAppFlow.from_client_secrets_file(creds_path, scopes=["https://www.googleapis.com/auth/drive"])
+            creds = flow.run_local_server(port=0)
 
-        if not creds:  # Эта проверка нужна после попытки обновления
-            logger.info("Необходима новая авторизация Google Drive.")
-            try:
-                flow = InstalledAppFlow.from_client_secrets_file(creds_path, SCOPES)
-                creds = flow.run_local_server(port=0)
-            except Exception as e:
-                msg = f"Не удалось выполнить авторизацию Google Drive: {e}"
-                logger.critical(msg, exc_info=True)
-                raise AuthError(msg) from e
-
-        try:
-            with open(token_file, "w") as token:
-                token.write(creds.to_json())
-            logger.info(f"Учетные данные Google Drive сохранены в {token_file}")
-        except Exception as e:
-            logger.error(f"Не удалось сохранить {token_file}: {e}")
+        # Сохраняем учетные данные для следующего запуска
+        with open(token_path, "w") as token_file:
+            token_file.write(creds.to_json())
+        logger.info("Учетные данные Google сохранены в token.json")
 
     _google_creds_cache = creds
     return creds

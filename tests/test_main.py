@@ -1,198 +1,113 @@
-import asyncio
-from pathlib import Path
-from unittest.mock import patch, MagicMock, ANY
+# tests/test_main.py
 
 import pytest
+from unittest.mock import patch, MagicMock, AsyncMock
 
-from src.config import ConfigError
 from src.main import main
+# --- ИЗМЕНЕНИЕ: Добавлен недостающий импорт ---
+from src.config import ConfigError
 
 
 @pytest.fixture
-def mock_config():
-    """Фикстура для мока конфигурации."""
-    config = MagicMock()
-    config.LOG_LEVEL = "INFO"
-    config.LOG_TO_FILE = False
-    config.LOG_FILE_PATH = "test.log"
-    config.TEMP_DIR_PREFIX = "test_downloader"
-    return config
+def mock_cli_config(monkeypatch):
+    """Фикстура для мокирования get_config для CLI-тестов."""
+    mock_config_instance = MagicMock()
+    mock_config_instance.LOG_LEVEL = "INFO"
+    mock_config_instance.LOG_TO_FILE = False
+    mock_config_instance.LOG_FILE_PATH = "/tmp/test.log"
+    monkeypatch.setattr("src.main.get_config", lambda: mock_config_instance)
+    return mock_config_instance
 
 
-class TestMain:
-    """Тесты для функции main в src/main.py."""
-
-    @patch("src.main.show_gui")
-    @patch("sys.argv", ["main.py"])
-    def test_main_launches_gui_without_args(self, mock_show_gui):
-        """
-        Проверяет, что при запуске без аргументов вызывается GUI.
-        """
-        with pytest.raises(SystemExit):
-            main()
-        mock_show_gui.assert_called_once()
-
-    @patch("src.main.upload_to_yandex_disk")
-    @patch("src.main.upload_to_google_drive")
-    @patch("src.main.download_video")
-    @patch("src.main.setup_logger")
-    @patch("src.main.get_config")
-    @patch("tempfile.TemporaryDirectory")
-    @patch(
-        "sys.argv",
-        [
-            "main.py",
-            "--url",
-            "http://test.video",
-            "--cloud",
-            "google",
-            "--path",
-            "/test/path",
-        ],
-    )
-    def test_cli_google_drive_success(
-        self,
-        mock_temp_dir,
-        mock_get_config,
-        mock_setup_logger,
-        mock_download_video,
-        mock_upload_google,
-        mock_upload_yandex,
-        mock_config,
-    ):
-        """
-        Тестирует успешный сценарий CLI с загрузкой на Google Drive.
-        """
-        mock_get_config.return_value = mock_config
-        mock_temp_dir.return_value.__enter__.return_value = "/tmp/testdir"
-        mock_download_video.return_value = Path("/tmp/testdir/video.mp4")
-
+@patch('src.main.sys.argv', ['vdu-cli'])
+@patch('src.main.show_gui')
+def test_main_no_args_calls_gui(mock_show_gui):
+    """Тест: вызов без аргументов запускает GUI."""
+    with pytest.raises(SystemExit):
         main()
+    mock_show_gui.assert_called_once()
 
-        mock_download_video.assert_called_once_with(
-            "http://test.video", Path("/tmp/testdir")
-        )
-        mock_upload_google.assert_called_once_with(
-            Path("/tmp/testdir/video.mp4"), "/test/path", "video.mp4"
-        )
-        mock_upload_yandex.assert_not_called()
 
-    @patch("asyncio.run")
-    @patch("src.main.upload_to_yandex_disk", new_callable=MagicMock)
-    @patch("src.main.upload_to_google_drive")
-    @patch("src.main.download_video")
-    @patch("src.main.setup_logger")
-    @patch("src.main.get_config")
-    @patch("tempfile.TemporaryDirectory")
-    @patch(
-        "sys.argv",
-        [
-            "main.py",
-            "--url",
-            "http://test.video",
-            "--cloud",
-            "yandex",
-            "--path",
-            "/test/path",
-        ],
-    )
-    def test_cli_yandex_disk_success(
-        self,
-        mock_temp_dir,
-        mock_get_config,
-        mock_setup_logger,
-        mock_download_video,
-        mock_upload_google,
-        mock_upload_yandex,
-        mock_asyncio_run,
-        mock_config,
-    ):
-        """
-        Тестирует успешный сценарий CLI с загрузкой на Яндекс.Диск.
-        """
-        mock_get_config.return_value = mock_config
-        mock_temp_dir.return_value.__enter__.return_value = "/tmp/testdir"
-        mock_download_video.return_value = Path("/tmp/testdir/video.mp4")
-
-        # Мокируем асинхронную функцию
-        async def dummy_upload(*args, **kwargs):
-            return "http://yandex.disk/link"
-
-        mock_upload_yandex.return_value = dummy_upload()
-
+@patch('src.main.sys.argv', ['vdu-cli', '--help'])
+def test_main_with_help_arg_exits():
+    """Тест: вызов с --help должен завершать программу."""
+    with pytest.raises(SystemExit) as e:
         main()
+    assert e.value.code == 0
 
-        mock_download_video.assert_called_once_with(
-            "http://test.video", Path("/tmp/testdir")
-        )
-        # Проверяем, что asyncio.run был вызван с нужным корутином
-        mock_asyncio_run.assert_called_once()
-        # Проверяем, что сама функция была вызвана с нужными параметрами внутри run
-        mock_upload_yandex.assert_called_once_with(
-            Path("/tmp/testdir/video.mp4"), "/test/path", "video.mp4"
-        )
-        mock_upload_google.assert_not_called()
 
-    @patch("src.main.setup_logger")
-    @patch("src.main.get_config")
-    @patch("sys.argv", ["main.py", "--url", "http://test.video"])
-    def test_cli_no_url_fails(self, mock_get_config, mock_setup_logger, mock_config):
-        """
-        Тестирует, что CLI падает, если не указан --url.
-        """
-        # Этот тест на самом деле проверяет отсутствие --url, но sys.argv мокает его наличие.
-        # Изменим argv, чтобы он соответствовал цели теста.
-        with patch("sys.argv", ["main.py", "--cloud", "google"]):
-            mock_get_config.return_value = mock_config
-            mock_logger = MagicMock()
-            mock_setup_logger.return_value = mock_logger
+@patch('src.main.sys.argv', ['vdu-cli', '--url', 'test_url'])
+@patch('src.main.download_video')
+@patch('src.main.upload_single_file')
+def test_main_cli_no_cloud_only_downloads(mock_upload, mock_download, mock_cli_config, tmp_path):
+    """Тест: CLI без --cloud только скачивает файл."""
+    mock_download.return_value = {"status": "успех", "path": tmp_path / "video.mp4"}
+    main()
+    mock_download.assert_called_once()
+    mock_upload.assert_not_called()
 
-            with pytest.raises(SystemExit) as e:
-                main()
 
-            assert e.value.code == 1
-            mock_logger.error.assert_called_with(
-                "Аргумент --url обязателен для режима CLI."
-            )
+@patch('src.main.sys.argv', ['vdu-cli', '--url', 'test_url', '--cloud', 'Google Drive', '--path', 'gdrive_folder'])
+@patch('src.main.download_video')
+@patch('src.main.upload_single_file', new_callable=AsyncMock)
+@patch('asyncio.run')
+def test_main_cli_with_cloud_calls_uploader(mock_asyncio_run, mock_upload, mock_download, mock_cli_config, tmp_path):
+    """Тест: CLI с --cloud вызывает единый загрузчик."""
+    video_file = tmp_path / "video.mp4"
+    video_file.touch()
+    mock_download.return_value = {"status": "успех", "path": video_file}
+    mock_asyncio_run.return_value = {"status": "успех"}
 
-    @patch("src.main.get_config")
-    @patch("sys.argv", ["main.py", "--url", "http://test.video"])
-    def test_cli_config_error_fails(self, mock_get_config):
-        """
-        Тестирует, что CLI падает при ошибке конфигурации.
-        """
-        mock_get_config.side_effect = ConfigError("Test config error")
-        with pytest.raises(SystemExit) as e:
-            main()
-        assert e.value.code == 1
+    main()
 
-    @patch("src.main.download_video")
-    @patch("src.main.setup_logger")
-    @patch("src.main.get_config")
-    @patch("tempfile.TemporaryDirectory")
-    @patch("sys.argv", ["main.py", "--url", "http://test.video"])
-    def test_cli_download_failure_fails(
-        self,
-        mock_temp_dir,
-        mock_get_config,
-        mock_setup_logger,
-        mock_download_video,
-        mock_config,
-    ):
-        """
-        Тестирует, что CLI падает, если скачивание видео не удалось.
-        """
-        mock_get_config.return_value = mock_config
-        mock_temp_dir.return_value.__enter__.return_value = "/tmp/testdir"
-        mock_download_video.return_value = None  # Симулируем ошибку скачивания
-        mock_logger = MagicMock()
-        mock_setup_logger.return_value = mock_logger
+    mock_download.assert_called_once()
+    mock_upload.assert_called_once_with({
+        "file_path": str(video_file),
+        "cloud_storage": "Google Drive",
+        "cloud_folder_path": "gdrive_folder",
+        "filename": "video.mp4",
+    })
+    mock_asyncio_run.assert_called_once()
 
-        with pytest.raises(SystemExit) as e:
-            main()
 
-        assert e.value.code == 1
-        mock_logger.critical.assert_called_with(
-            "Критическая ошибка в режиме CLI: Скачивание не удалось, файл не был получен.",
-            exc_info=True,
-        )
+@patch('src.main.sys.argv', ['vdu-cli', '--cloud', 'Google Drive'])
+def test_main_cli_missing_url_exits():
+    """Тест: CLI без --url должен завершаться с ошибкой."""
+    with pytest.raises(SystemExit) as e:
+        main()
+    assert e.value.code == 1
+
+
+@patch('src.main.sys.argv', ['vdu-cli', '--url', 'test_url'])
+@patch('src.main.download_video')
+def test_main_cli_handles_download_exception(mock_download, mock_cli_config):
+    """Тест: CLI корректно обрабатывает исключение при скачивании."""
+    mock_download.return_value = {"status": "ошибка", "error": "Download failed"}
+    with pytest.raises(SystemExit) as e:
+        main()
+    assert e.value.code == 1
+
+
+@patch('src.main.sys.argv', ['vdu-cli', '--url', 'test_url', '--cloud', 'Google Drive'])
+@patch('src.main.download_video')
+@patch('asyncio.run')
+def test_main_cli_handles_upload_exception(mock_asyncio_run, mock_download, mock_cli_config, tmp_path):
+    """Тест: CLI корректно обрабатывает исключение при загрузке."""
+    video_file = tmp_path / "video.mp4"
+    video_file.touch()
+    mock_download.return_value = {"status": "успех", "path": video_file}
+    mock_asyncio_run.return_value = {"status": "ошибка", "error": "Upload failed"}
+
+    with pytest.raises(SystemExit) as e:
+        main()
+    assert e.value.code == 1
+
+
+@patch('src.main.sys.argv', ['vdu-cli', '--url', 'test_url'])
+@patch('src.main.get_config')
+def test_main_cli_handles_config_error(mock_get_config):
+    """Тест: CLI корректно обрабатывает ошибку конфигурации."""
+    mock_get_config.side_effect = ConfigError("Test config error")
+    with pytest.raises(SystemExit) as e:
+        main()
+    assert e.value.code == 1

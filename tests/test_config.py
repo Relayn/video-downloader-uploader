@@ -1,112 +1,138 @@
-import pytest
+# tests/test_config.py
+
 import os
-import logging
-from pathlib import Path
-from pydantic import ValidationError, SecretStr
-
-# Импортируем то, что будем тестировать
-from src.config import AppSettings, get_config, setup_logger, ConfigError
-
-
-def test_get_config_creates_new_instance():
-    """Проверяет, что get_config() создает новый экземпляр при каждом вызове."""
-    c1 = get_config()
-    c2 = get_config()
-    assert c1 is not c2
+import pytest
+from unittest.mock import patch
+from pydantic import SecretStr
+from dotenv import dotenv_values
+# Тестируемый модуль
+from src import config
+from src.config import AppSettings, get_config, reload_config, save_specific_settings_to_env, ConfigError
 
 
-def test_load_defaults(monkeypatch):
-    """Проверяет, что без .env файла и переменных окружения загружаются значения по умолчанию."""
-    # Гарантируем, что переменные окружения не установлены на время теста
+@pytest.fixture(autouse=True)
+def cleanup_config_cache():
+    """Фикстура для автоматической очистки кеша get_config перед каждым тестом."""
+    get_config.cache_clear()
+    yield
+
+
+@pytest.fixture
+def mock_env_file(tmp_path, monkeypatch):
+    """Фикстура для создания временного .env файла и подмены пути к нему."""
+    env_path = tmp_path / ".env"
+    monkeypatch.setattr(config, "ENV_FILE_PATH", env_path)
+    return env_path
+
+
+def test_app_settings_default_values(mock_env_file, monkeypatch):
+    """Тест, что AppSettings использует значения по умолчанию, если нет других источников."""
     monkeypatch.delenv("LOG_LEVEL", raising=False)
-    monkeypatch.delenv("LOG_TO_FILE", raising=False)
-    config = AppSettings(_env_file=None)
-    assert config.LOG_LEVEL == "INFO"
-    assert config.LOG_TO_FILE is False
+
+    settings = get_config()
+
+    assert settings.LOG_LEVEL == "INFO"
+    assert settings.LOG_TO_FILE is False
 
 
-def test_load_from_dotenv_file(tmp_path, monkeypatch):
-    """Проверяет, что настройки корректно загружаются из .env файла."""
-    # Гарантируем, что переменные окружения не установлены на время теста
-    monkeypatch.delenv("LOG_LEVEL", raising=False)
-    monkeypatch.delenv("YANDEX_TOKEN", raising=False)
-    env_content = "LOG_LEVEL=DEBUG\nLOG_TO_FILE=True\nYANDEX_TOKEN=my-secret-token"
-    env_file = tmp_path / ".env.test"
-    env_file.write_text(env_content)
-
-    config = AppSettings(_env_file=env_file)
-    assert config.LOG_LEVEL == "DEBUG"
-    assert config.LOG_TO_FILE is True
-    assert config.YANDEX_TOKEN.get_secret_value() == "my-secret-token"
-
-
-def test_override_with_env_variables(monkeypatch, tmp_path):
-    """Проверяет, что переменные окружения имеют приоритет над .env файлом."""
-    env_content = "LOG_LEVEL=DEBUG"
-    env_file = tmp_path / ".env.test"
-    env_file.write_text(env_content)
-
-    monkeypatch.setenv("LOG_LEVEL", "WARNING")
-
-    config = AppSettings(_env_file=env_file)
-    assert config.LOG_LEVEL == "WARNING"
-
-
-def test_path_validation_file_exists(tmp_path):
-    """Тест валидации FilePath для существующего файла."""
-    ffmpeg_file = tmp_path / "ffmpeg.exe"
-    ffmpeg_file.touch()
-
-    config = AppSettings(FFMPEG_PATH=str(ffmpeg_file))
-    assert config.FFMPEG_PATH == ffmpeg_file
-
-
-def test_path_validation_file_not_exists(tmp_path):
-    """Тест валидации FilePath для несуществующего файла (должен вызвать ошибку)."""
-    ffmpeg_path = tmp_path / "ffmpeg.exe"
-    with pytest.raises(ValidationError):
-        AppSettings(FFMPEG_PATH=str(ffmpeg_path))
-
-
-def test_save_and_reload_settings(tmp_path, monkeypatch):
-    """
-    Тест сохранения настроек в файл.
-    Проверяет, что метод save_settings корректно записывает значения в .env файл.
-    """
-    # Гарантируем, что переменные окружения не будут мешать тесту
-    monkeypatch.delenv("LOG_LEVEL", raising=False)
-    monkeypatch.delenv("LOG_TO_FILE", raising=False)
-
-    env_file = tmp_path / ".env.test"
-    # Этот конфиг нам нужен только для вызова метода, его _env_file не важен
-    config = AppSettings()
-
-    # Сохраняем новые настройки, ЯВНО указывая путь
-    new_settings = {"LOG_LEVEL": "CRITICAL", "LOG_TO_FILE": "True"}
-    config.save_settings(new_settings, path=env_file)
-
-    # Проверяем содержимое файла напрямую
-    content = env_file.read_text()
-    assert 'LOG_LEVEL="CRITICAL"' in content
-    assert 'LOG_TO_FILE="True"' in content
-
-
-def test_setup_logger(tmp_path):
-    """Тест, что логгер создается и пишет в файл, если это указано."""
-    log_file = tmp_path / "test.log"
-    # Используем model_construct, чтобы не зависеть от существования файла при создании
-    config = AppSettings.model_construct(LOG_TO_FILE=True, LOG_FILE_PATH=log_file)
-
-    logger = setup_logger(
-        "test_logger", config.LOG_LEVEL, config.LOG_TO_FILE, config.LOG_FILE_PATH
+def test_app_settings_load_from_env_file(mock_env_file):
+    """Тест, что AppSettings корректно загружает значения из .env файла."""
+    mock_env_file.write_text(
+        'LOG_LEVEL="DEBUG"\n'
+        'YANDEX_DISK_TOKEN="my-secret-token"'
     )
 
-    test_message = "This is a test message"
-    logger.info(test_message)
+    settings = get_config()
 
-    # Принудительно закрываем все обработчики, чтобы сбросить буфер в файл
-    logging.shutdown()
+    assert settings.LOG_LEVEL == "DEBUG"
+    # Теперь этот тест должен пройти, так как тип в модели SecretStr
+    assert isinstance(settings.YANDEX_DISK_TOKEN, SecretStr)
+    assert settings.YANDEX_DISK_TOKEN.get_secret_value() == "my-secret-token"
 
-    assert log_file.exists()
-    with open(log_file, "r") as f:
-        assert test_message in f.read()
+
+def test_app_settings_env_variable_overrides_file(mock_env_file, monkeypatch):
+    """Тест, что переменная окружения имеет приоритет над .env файлом."""
+    mock_env_file.write_text('LOG_LEVEL="DEBUG"')
+    monkeypatch.setenv("LOG_LEVEL", "WARNING")
+
+    settings = get_config()
+
+    assert settings.LOG_LEVEL == "WARNING"
+
+
+def test_get_config_is_cached(mock_env_file):
+    """Тест, что get_config() кеширует результат и возвращает один и тот же объект."""
+    config1 = get_config()
+    config2 = get_config()
+
+    assert config1 is config2
+
+
+def test_reload_config_clears_cache(mock_env_file, monkeypatch):
+    """Тест, что reload_config() сбрасывает кеш и загружает новые значения."""
+    monkeypatch.setenv("LOG_LEVEL", "INFO")
+    config1 = get_config()
+    assert config1.LOG_LEVEL == "INFO"
+
+    monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+    config2 = get_config()
+    assert config2.LOG_LEVEL == "INFO"
+    assert config1 is config2
+
+    config3 = reload_config()
+    assert config3.LOG_LEVEL == "DEBUG"
+    assert config1 is not config3
+
+
+def test_save_settings_creates_new_file(mock_env_file):
+    """Тест, что save_specific_settings_to_env создает .env, если его нет."""
+    assert not mock_env_file.exists()
+
+    save_specific_settings_to_env({"FFMPEG_PATH": "C:/ffmpeg/bin"})
+
+    assert mock_env_file.exists()
+    content = mock_env_file.read_text()
+    # python-dotenv может не ставить кавычки, если не нужно, проверяем гибче
+    assert 'FFMPEG_PATH' in content
+    assert 'C:/ffmpeg/bin' in content
+
+
+def test_save_settings_updates_existing_file(mock_env_file):
+    """Тест, что save_specific_settings_to_env обновляет и добавляет значения."""
+    mock_env_file.write_text(
+        'LOG_LEVEL="INFO"\n'
+        'PROXY_URL="http://old.proxy"\n'
+    )
+
+    settings_to_save = {
+        "LOG_LEVEL": "DEBUG",
+        "FFMPEG_PATH": "/usr/bin/ffmpeg"
+    }
+    save_specific_settings_to_env(settings_to_save)
+
+    # --- ИСПРАВЛЕНИЕ: Парсим файл вместо хрупкой проверки строк ---
+    result = dotenv_values(mock_env_file)
+
+    assert result["LOG_LEVEL"] == "DEBUG"
+    assert result["PROXY_URL"] == "http://old.proxy"
+    assert result["FFMPEG_PATH"] == "/usr/bin/ffmpeg"
+
+
+@patch("src.config.set_key")
+def test_save_settings_raises_config_error_on_io_error(mock_set_key, mock_env_file):
+    """Тест, что save_specific_settings_to_env выбрасывает ConfigError при ошибке ввода-вывода."""
+    mock_set_key.side_effect = IOError("Disk full")
+
+    with pytest.raises(ConfigError, match="Ошибка при записи в .env файл: Disk full"):
+        save_specific_settings_to_env({"LOG_LEVEL": "FAIL"})
+
+
+# --- НОВЫЙ ТЕСТ для покрытия блока except в get_config ---
+@patch("src.config.AppSettings")
+def test_get_config_raises_config_error_on_validation_error(MockAppSettings, mock_env_file):
+    """Тест, что get_config выбрасывает ConfigError при ошибке валидации Pydantic."""
+    # Имитируем ошибку, которую может выбросить Pydantic
+    MockAppSettings.side_effect = Exception("Pydantic validation failed")
+
+    with pytest.raises(ConfigError, match="Ошибка при валидации конфигурации: Pydantic validation failed"):
+        get_config()
