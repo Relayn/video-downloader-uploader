@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "video-downloader-uploader"
-version = "2.1.0"
+version = "3.0.0"
 description = "Десктопное приложение для скачивания видео и загрузки в облачные хранилища (Google Drive, Яндекс.Диск)."
 authors = [
   { name = "Aleksei Novopashin", email = "aleks@example.com" },
@@ -16,7 +16,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Topic :: Multimedia :: Video",
     "Topic :: Utilities",
 ]
