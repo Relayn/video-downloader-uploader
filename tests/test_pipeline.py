@@ -1,12 +1,9 @@
-# tests/test_pipeline.py
 import asyncio
 from asyncio import CancelledError
 from pathlib import Path
 from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
-
-# ИЗМЕНЕНИЕ: Импортируем DownloadUploadWorker напрямую, чтобы упростить пути для patch
 from src.gui import DownloadUploadWorker, CancellationFlag, WorkerSignals
 
 
@@ -45,8 +42,6 @@ def base_worker_params(cancellation_flag):
 # Тесты для логики runner'а (метода run)
 # ============================================
 
-# --- НАЧАЛО ИСПРАВЛЕНИЙ ---
-
 @patch("src.gui.DownloadUploadWorker.main_pipeline", new_callable=AsyncMock)
 def test_run_method_calls_main_pipeline(mock_main_pipeline, base_worker_params, worker_signals):
     """Тест: метод run() успешно вызывает main_pipeline."""
@@ -54,10 +49,7 @@ def test_run_method_calls_main_pipeline(mock_main_pipeline, base_worker_params, 
     worker.signals = worker_signals
 
     worker.run()
-
-    # Проверяем, что наш асинхронный мок был вызван и "дождан" один раз
     mock_main_pipeline.assert_awaited_once()
-    # Убедимся, что сигналы об ошибке/завершении не были вызваны (т.к. pipeline не вернул результат)
     worker.signals.error.emit.assert_not_called()
     worker.signals.finished.emit.assert_not_called()
 
@@ -92,8 +84,6 @@ def test_run_method_handles_general_exception(mock_main_pipeline, base_worker_pa
     # Проверяем, что был вызван сигнал error с текстом ошибки
     worker.signals.error.emit.assert_called_once_with("Test Error")
     worker.signals.finished.emit.assert_not_called()
-
-# --- КОНЕЦ ИСПРАВЛЕНИЙ ---
 
 
 # ============================================

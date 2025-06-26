@@ -1,5 +1,3 @@
-# src/uploader.py
-
 import asyncio
 import logging
 import os
@@ -8,12 +6,10 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
-# --- ИЗМЕНЕНИЕ 1: Новый импорт ---
 import yadisk
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaFileUpload
-# --- ИЗМЕНЕНИЕ 2: Новый импорт исключения ---
 from yadisk.exceptions import YaDiskError
 
 from .auth import get_google_drive_credentials, get_yandex_token
@@ -46,7 +42,6 @@ class YandexDiskUploaderStrategy(UploaderStrategy):
 
         remote_path = f"/{cloud_folder_path}/{filename}"
         try:
-            # --- ИЗМЕНЕНИЕ 3: Используем новый класс AsyncYaDisk ---
             async with yadisk.AsyncYaDisk(token=token) as disk:
                 if not await disk.check_token():
                     raise UploadError("Токен Яндекс.Диска невалиден.") # pragma: no cover
@@ -64,7 +59,6 @@ class YandexDiskUploaderStrategy(UploaderStrategy):
         if not token:
             return False, "Токен Яндекс.Диска не найден."
         try:
-            # --- ИЗМЕНЕНИЕ 4: Используем новый класс AsyncYaDisk ---
             async with yadisk.AsyncYaDisk(token=token) as disk:
                 if await disk.check_token():
                     return True, ""

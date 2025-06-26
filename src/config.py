@@ -1,13 +1,10 @@
-# src/config.py
-
 import os
 from pathlib import Path
 from typing import Optional
 from functools import lru_cache
 
-from pydantic import SecretStr # <-- ДОБАВИТЬ ИМПОРТ
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
-# python-dotenv нужен для set_key
 from dotenv import set_key
 
 
@@ -34,7 +31,6 @@ class AppSettings(BaseSettings):
     LOG_FILE_PATH: str = str(BASE_DIR / "logs" / "app.log")
 
     # Токены API
-    # --- ИЗМЕНЕНИЕ: Используем SecretStr для безопасности ---
     YANDEX_DISK_TOKEN: Optional[SecretStr] = None
 
     # Пути к файлам аутентификации Google
@@ -69,8 +65,6 @@ def reload_config() -> AppSettings:
 def save_specific_settings_to_env(settings_to_save: dict):
     """Сохраняет или обновляет указанные настройки в .env файле."""
     try:
-        # --- ИЗМЕНЕНИЕ: Работаем с ENV_FILE_PATH, который можно подменить в тестах ---
-        # Создаем файл, если его нет
         if not ENV_FILE_PATH.exists():
             ENV_FILE_PATH.touch()
 

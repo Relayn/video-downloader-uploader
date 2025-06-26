@@ -1,10 +1,7 @@
-# tests/test_main.py
-
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
 
 from src.main import main
-# --- ИЗМЕНЕНИЕ: Добавлен недостающий импорт ---
 from src.config import ConfigError
 
 

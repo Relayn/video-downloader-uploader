@@ -1,14 +1,12 @@
 import logging
 from pathlib import Path
 from yt_dlp import YoutubeDL
-import shutil  # НОВЫЙ ИМПОРТ
+import shutil
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_FILENAME_TEMPLATE = "%(title)s.%(ext)s"
 
-
-# НОВАЯ ФУНКЦИЯ
 def is_ffmpeg_installed() -> bool:
     """Проверяет, доступен ли ffmpeg в системном PATH."""
     return shutil.which("ffmpeg") is not None
@@ -21,7 +19,6 @@ def download_video(
         proxy: str | None = None,
         filename_template: str | None = None,
 ) -> dict:
-    # ... (код функции без изменений) ...
     logger.info(f"Начало скачивания: {url}")
     try:
         final_template = filename_template or DEFAULT_FILENAME_TEMPLATE

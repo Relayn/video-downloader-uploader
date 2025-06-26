@@ -9,8 +9,8 @@ from PySide6.QtWidgets import (
     QComboBox,
     QCheckBox,
     QFileDialog,
-    QWidget,  # Добавляем QWidget в импорты
-    QHBoxLayout, # и QHBoxLayout
+    QWidget,
+    QHBoxLayout,
 )
 from src.config import get_config
 
@@ -35,7 +35,6 @@ class SettingsDialog(QDialog):
         self.log_to_file_check = QCheckBox("Включить логирование в файл")
         self.log_file_path_edit = QLineEdit()
 
-        # --- НАЧАЛО ИЗМЕНЕНИЯ ---
         # Добавление виджетов в форму с уникальными именами для кнопок
         form_layout.addRow("Токен Яндекс.Диска:", self.yandex_token_edit)
         form_layout.addRow("Путь к Google creds.json:", self._create_file_selector(self.google_creds_path_edit, "browse_creds_btn"))
@@ -44,7 +43,6 @@ class SettingsDialog(QDialog):
         form_layout.addRow("Уровень логгирования:", self.log_level_combo)
         form_layout.addRow(self.log_to_file_check)
         form_layout.addRow("Путь к файлу логов:", self._create_file_selector(self.log_file_path_edit, "browse_log_btn", is_save=True))
-        # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
         layout.addLayout(form_layout)
 
@@ -55,7 +53,6 @@ class SettingsDialog(QDialog):
 
         self.load_settings()
 
-    # --- НАЧАЛО ИЗМЕНЕНИЯ ---
     def _create_file_selector(self, line_edit: QLineEdit, button_object_name: str, is_save: bool = False) -> QWidget:
         """Создает контейнер с полем ввода и кнопкой '...'."""
         container = QWidget()
@@ -67,7 +64,6 @@ class SettingsDialog(QDialog):
         browse_btn.clicked.connect(lambda: self._browse_file(line_edit, is_save))
         layout.addWidget(browse_btn)
         return container
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
     def _browse_file(self, line_edit, is_save):
         if is_save:

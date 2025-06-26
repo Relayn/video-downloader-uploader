@@ -1,10 +1,6 @@
-# tests/test_auth.py
-
 import pytest
 from unittest.mock import patch, MagicMock, call
 from pydantic import SecretStr
-
-# Тестируемый модуль
 from src import auth
 from src.auth import get_yandex_token, get_google_drive_credentials, AuthError
 from src.config import AppSettings
@@ -168,12 +164,9 @@ def test_get_google_creds_refresh_failure(mock_open, mock_os_remove, MockCredent
     creds_file.touch()
     mock_config(GOOGLE_CREDS_PATH=creds_file)
 
-    # --- ИСПРАВЛЕНИЕ: Создаем умный, состоянием-зависимый мок ---
     def exists_side_effect(path):
-        # Если это файл credentials.json, он всегда существует
         if path == creds_file:
             return True
-        # Если это token.json, он существует, только если его еще не "удалили"
         if path == "token.json":
             return not mock_os_remove.called
         return False

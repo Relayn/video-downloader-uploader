@@ -1,13 +1,10 @@
-# tests/test_gui.py
 import json
 import pytest
-# --- НАЧАЛО ИСПРАВЛЕНИЯ: Удаляем несуществующий 'spy' ---
 from unittest.mock import patch, MagicMock
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QPushButton, QLineEdit, QDialog
 from PySide6.QtGui import QCloseEvent
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 from src.config import AppSettings
 from src.gui import VideoUploaderGUI

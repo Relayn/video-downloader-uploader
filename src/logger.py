@@ -2,7 +2,7 @@ import logging
 import sys
 from typing import Optional
 from logging.handlers import RotatingFileHandler
-from pathlib import Path  # НОВЫЙ ИМПОРТ
+from pathlib import Path
 
 
 def setup_logger(name: str, level: str = "INFO", to_file: bool = False, file_path: Optional[str] = None,
@@ -12,10 +12,8 @@ def setup_logger(name: str, level: str = "INFO", to_file: bool = False, file_pat
     расширенного форматирования и динамического изменения уровня логирования.
     """
     logger = logging.getLogger(name)
-    # Очищаем старые обработчики, чтобы не было дублирующих
     if logger.hasHandlers():
         logger.handlers.clear()
-    # Расширенный формат
     formatter = logging.Formatter(
         "%(asctime)s - %(levelname)s - %(name)s - %(module)s.%(funcName)s:%(lineno)d - %(message)s"
     )
@@ -25,11 +23,8 @@ def setup_logger(name: str, level: str = "INFO", to_file: bool = False, file_pat
 
     if to_file and file_path:
         try:
-            # --- НАЧАЛО ИЗМЕНЕНИЯ ---
-            # Убедимся, что директория для логов существует
             log_dir = Path(file_path).parent
             log_dir.mkdir(parents=True, exist_ok=True)
-            # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
             file_handler = RotatingFileHandler(file_path, maxBytes=max_bytes, backupCount=backup_count,
                                                encoding="utf-8")

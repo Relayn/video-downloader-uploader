@@ -1,4 +1,3 @@
-# src/gui.py
 import sys
 from pathlib import Path
 import os
@@ -112,7 +111,6 @@ class DownloadUploadWorker(QRunnable):
         self.proxy = proxy
         self.logger = setup_logger("Worker")
 
-    # --- НАЧАЛО ИЗМЕНЕНИЯ ---
     @Slot()
     def run(self):
         """
@@ -128,7 +126,6 @@ class DownloadUploadWorker(QRunnable):
         except Exception as e:
             self.logger.error(f"Критическая ошибка в воркере: {e}", exc_info=True)
             self.signals.error.emit(str(e))
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
     async def main_pipeline(self):
         from tempfile import TemporaryDirectory

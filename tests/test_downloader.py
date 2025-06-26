@@ -1,5 +1,3 @@
-# tests/test_downloader.py
-
 import pytest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
@@ -45,11 +43,9 @@ def test_download_video_success(mock_youtube_dl, tmp_path):
     # Проверяем, что YoutubeDL был вызван с правильными базовыми опциями
     mock_youtube_dl.assert_called_once()
 
-    # --- НАЧАЛО ИЗМЕНЕНИЯ ---
     args, kwargs = mock_youtube_dl.call_args
     options_dict = args[0]
     assert options_dict['outtmpl'] == str(download_dir / DEFAULT_FILENAME_TEMPLATE)
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
     # Проверяем, что результат корректен
     assert result['status'] == 'успех'
@@ -79,15 +75,12 @@ def test_download_video_with_options(mock_youtube_dl, tmp_path):
     )
 
     mock_youtube_dl.assert_called_once()
-
-    # --- НАЧАЛО ИЗМЕНЕНИЯ ---
     args, kwargs = mock_youtube_dl.call_args
     options_dict = args[0]
     # Проверяем, что все опции были добавлены в словарь
     assert options_dict['format'] == quality
     assert options_dict['proxy'] == proxy
     assert options_dict['outtmpl'] == str(tmp_path / template)
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 
 @patch('src.downloader.YoutubeDL')
@@ -97,7 +90,6 @@ def test_download_video_failure(mock_youtube_dl, tmp_path):
     error_message = "Video unavailable"
 
     # Настраиваем мок на выброс исключения
-    # --- ИЗМЕНЕНИЕ: Исключение должно выбрасываться при входе в контекстный менеджер ---
     mock_youtube_dl.return_value.__enter__.side_effect = Exception(error_message)
 
     result = download_video(url, tmp_path)

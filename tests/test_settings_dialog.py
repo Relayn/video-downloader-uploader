@@ -1,12 +1,8 @@
-# tests/test_settings_dialog.py
-
 import pytest
 from unittest.mock import patch, MagicMock
 
 from PySide6.QtWidgets import QApplication, QPushButton
-# --- НАЧАЛО ИСПРАВЛЕНИЯ ---
 from PySide6.QtCore import Qt
-# --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
 from src.config import AppSettings
 from src.settings_dialog import SettingsDialog
@@ -90,9 +86,7 @@ def test_browse_google_creds_file(mock_get_open_file_name, qapp, qtbot, mock_con
     mock_get_open_file_name.return_value = (expected_path, "")
 
     browse_button = dialog.findChild(QPushButton, "browse_creds_btn")
-    # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
     qtbot.mouseClick(browse_button, Qt.MouseButton.LeftButton)
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     mock_get_open_file_name.assert_called_once()
     assert dialog.google_creds_path_edit.text() == expected_path
@@ -108,9 +102,7 @@ def test_browse_log_file(mock_get_save_file_name, qapp, qtbot, mock_config):
     mock_get_save_file_name.return_value = (expected_path, "")
 
     browse_button = dialog.findChild(QPushButton, "browse_log_btn")
-    # --- НАЧАЛО ИСПРАВЛЕНИЯ ---
     qtbot.mouseClick(browse_button, Qt.MouseButton.LeftButton)
-    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     mock_get_save_file_name.assert_called_once()
     assert dialog.log_file_path_edit.text() == expected_path

@@ -1,5 +1,3 @@
-# tests/test_logger.py
-
 import logging
 import pytest
 from unittest.mock import patch, MagicMock
@@ -57,9 +55,7 @@ def test_setup_logger_creates_log_directory(tmp_path):
     assert log_dir.is_dir()
 
 
-# --- НАЧАЛО ИЗМЕНЕНИЯ ---
-@patch("src.logger.RotatingFileHandler")  # ИСПРАВЛЕН ПУТЬ
-# --- КОНЕЦ ИЗМЕНЕНИЯ ---
+@patch("src.logger.RotatingFileHandler")
 def test_setup_logger_handles_io_error_on_file_creation(mock_handler, capsys):
     """Тест: обработка ошибки IOError при создании файлового обработчика."""
     mock_handler.side_effect = IOError("Permission denied")

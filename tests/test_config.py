@@ -1,11 +1,8 @@
-# tests/test_config.py
-
 import os
 import pytest
 from unittest.mock import patch
 from pydantic import SecretStr
 from dotenv import dotenv_values
-# Тестируемый модуль
 from src import config
 from src.config import AppSettings, get_config, reload_config, save_specific_settings_to_env, ConfigError
 
@@ -45,7 +42,6 @@ def test_app_settings_load_from_env_file(mock_env_file):
     settings = get_config()
 
     assert settings.LOG_LEVEL == "DEBUG"
-    # Теперь этот тест должен пройти, так как тип в модели SecretStr
     assert isinstance(settings.YANDEX_DISK_TOKEN, SecretStr)
     assert settings.YANDEX_DISK_TOKEN.get_secret_value() == "my-secret-token"
 
@@ -92,7 +88,6 @@ def test_save_settings_creates_new_file(mock_env_file):
 
     assert mock_env_file.exists()
     content = mock_env_file.read_text()
-    # python-dotenv может не ставить кавычки, если не нужно, проверяем гибче
     assert 'FFMPEG_PATH' in content
     assert 'C:/ffmpeg/bin' in content
 
@@ -109,8 +104,6 @@ def test_save_settings_updates_existing_file(mock_env_file):
         "FFMPEG_PATH": "/usr/bin/ffmpeg"
     }
     save_specific_settings_to_env(settings_to_save)
-
-    # --- ИСПРАВЛЕНИЕ: Парсим файл вместо хрупкой проверки строк ---
     result = dotenv_values(mock_env_file)
 
     assert result["LOG_LEVEL"] == "DEBUG"
@@ -126,12 +119,9 @@ def test_save_settings_raises_config_error_on_io_error(mock_set_key, mock_env_fi
     with pytest.raises(ConfigError, match="Ошибка при записи в .env файл: Disk full"):
         save_specific_settings_to_env({"LOG_LEVEL": "FAIL"})
 
-
-# --- НОВЫЙ ТЕСТ для покрытия блока except в get_config ---
 @patch("src.config.AppSettings")
 def test_get_config_raises_config_error_on_validation_error(MockAppSettings, mock_env_file):
     """Тест, что get_config выбрасывает ConfigError при ошибке валидации Pydantic."""
-    # Имитируем ошибку, которую может выбросить Pydantic
     MockAppSettings.side_effect = Exception("Pydantic validation failed")
 
     with pytest.raises(ConfigError, match="Ошибка при валидации конфигурации: Pydantic validation failed"):
