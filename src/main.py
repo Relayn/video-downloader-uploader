@@ -1,4 +1,3 @@
-# src/main.py
 import argparse
 import sys
 import asyncio
@@ -9,12 +8,20 @@ from src.config import get_config, ConfigError
 from src.logger import setup_logger
 from src.downloader import download_video
 from src.gui import main as show_gui
-# --- ЭТО ИСПРАВЛЕННЫЙ ИМПОРТ ---
 from src.uploader import upload_single_file, UPLOADER_STRATEGIES
 
+class CliOperationError(Exception):
+    """Кастомное исключение для ошибок в CLI-режиме."""
+    pass
 
 def main():
-    """Основная функция, обрабатывающая аргументы командной строки или запускающая GUI."""
+    """
+    Основная точка входа в приложение.
+
+    Анализирует аргументы командной строки. Если аргументы отсутствуют,
+    запускает графический интерфейс (GUI). В противном случае, выполняет
+    операцию скачивания и/или загрузки в режиме командной строки (CLI).
+    """
     parser = argparse.ArgumentParser(description="Скачивание и загрузка видео.")
     parser.add_argument("--url", help="URL видео для скачивания.")
     parser.add_argument(
@@ -26,7 +33,7 @@ def main():
     # Если URL не передан, и другие аргументы тоже, запускаем GUI
     if not args.url and len(sys.argv) == 1:
         show_gui()
-        sys.exit(0) # Выходим после закрытия GUI
+        sys.exit(0)  # Выходим после закрытия GUI
 
     # Если переданы другие аргументы, но не URL - это ошибка
     if not args.url:
@@ -53,7 +60,7 @@ def main():
         try:
             download_result = download_video(args.url, temp_dir)
             if download_result["status"] != "успех":
-                raise Exception(f"Скачивание не удалось: {download_result.get('error', 'Неизвестная ошибка')}")
+                raise CliOperationError(f"Скачивание не удалось: {download_result.get('error', 'Неизвестная ошибка')}")
 
             downloaded_file_path = download_result["path"]
             filename = downloaded_file_path.name
@@ -70,7 +77,7 @@ def main():
                 # Запускаем асинхронную функцию
                 upload_result = asyncio.run(upload_single_file(task))
                 if upload_result["status"] != "успех":
-                    raise Exception(f"Загрузка не удалась: {upload_result.get('error', 'Неизвестная ошибка')}")
+                    raise CliOperationError(f"Загрузка не удалась: {upload_result.get('error', 'Неизвестная ошибка')}")
                 logger.info(f"Файл успешно загружен. URL/Path: {upload_result.get('url') or upload_result.get('path')}")
             else:
                 logger.warning(f"Облако не выбрано, файл только скачан и сохранен в: {downloaded_file_path}")

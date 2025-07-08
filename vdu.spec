@@ -6,9 +6,8 @@ a = Analysis(
     ['src/main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=collect_data_files('PySide6'),
     hiddenimports=[
-        # Оставляем только те импорты, которые PyInstaller может пропустить
         'pydantic.v1.typing',
         'pydantic.v1.errors',
         'pydantic.v1.networks',
@@ -24,9 +23,6 @@ a = Analysis(
     cipher=None,
     noarchive=False,
 )
-
-# Собираем все необходимые файлы из PySide6
-a.datas += collect_data_files('PySide6')
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
@@ -44,11 +40,11 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,  # <-- False, чтобы скрыть консоль для GUI
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='icon.ico', # <-- Указываем иконку
+    icon='icon.ico',
 )

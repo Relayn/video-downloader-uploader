@@ -28,7 +28,7 @@ class AppSettings(BaseSettings):
     # Настройки логгирования
     LOG_LEVEL: str = "INFO"
     LOG_TO_FILE: bool = False
-    LOG_FILE_PATH: str = str(BASE_DIR / "logs" / "app.log")
+    LOG_FILE_PATH: Path = BASE_DIR / "logs" / "app.log"
 
     # Токены API
     YANDEX_DISK_TOKEN: Optional[SecretStr] = None
@@ -46,8 +46,15 @@ class AppSettings(BaseSettings):
 @lru_cache
 def get_config() -> AppSettings:
     """
-    Загружает конфигурацию и возвращает единственный экземпляр AppSettings.
-    Использует кеширование для предотвращения повторного чтения .env файла.
+    Загружает конфигурацию приложения и возвращает единственный экземпляр AppSettings.
+
+    Использует кеширование для предотвращения повторного чтения файла .env при каждом вызове.
+
+    Returns:
+        AppSettings: Кешированный экземпляр настроек приложения.
+
+    Raises:
+        ConfigError: Если во время валидации конфигурации возникает ошибка.
     """
     try:
         # Передаем путь к .env файлу при создании экземпляра
@@ -57,13 +64,29 @@ def get_config() -> AppSettings:
 
 
 def reload_config() -> AppSettings:
-    """Перезагружает конфигурацию, очищая кеш, и возвращает новый экземпляр."""
+    """
+    Перезагружает конфигурацию, очищая кеш, и возвращает новый экземпляр.
+
+    Returns:
+        AppSettings: Новый, перезагруженный экземпляр настроек приложения.
+    """
     get_config.cache_clear()
     return get_config()
 
 
 def save_specific_settings_to_env(settings_to_save: dict):
-    """Сохраняет или обновляет указанные настройки в .env файле."""
+    """
+    Сохраняет или обновляет указанные настройки в файле .env.
+
+    Создает файл .env, если он не существует.
+
+    Args:
+        settings_to_save (dict): Словарь настроек для сохранения.
+                                 Ключи - имена настроек, значения - новые значения.
+
+    Raises:
+        ConfigError: Если возникает ошибка ввода-вывода при записи в файл .env.
+    """
     try:
         if not ENV_FILE_PATH.exists():
             ENV_FILE_PATH.touch()

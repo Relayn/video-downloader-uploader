@@ -42,8 +42,7 @@ def test_download_video_success(mock_youtube_dl, tmp_path):
 
     # Проверяем, что YoutubeDL был вызван с правильными базовыми опциями
     mock_youtube_dl.assert_called_once()
-
-    args, kwargs = mock_youtube_dl.call_args
+    args, _ = mock_youtube_dl.call_args
     options_dict = args[0]
     assert options_dict['outtmpl'] == str(download_dir / DEFAULT_FILENAME_TEMPLATE)
 
@@ -75,7 +74,7 @@ def test_download_video_with_options(mock_youtube_dl, tmp_path):
     )
 
     mock_youtube_dl.assert_called_once()
-    args, kwargs = mock_youtube_dl.call_args
+    args, _ = mock_youtube_dl.call_args
     options_dict = args[0]
     # Проверяем, что все опции были добавлены в словарь
     assert options_dict['format'] == quality

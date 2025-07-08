@@ -8,7 +8,12 @@ logger = logging.getLogger(__name__)
 DEFAULT_FILENAME_TEMPLATE = "%(title)s.%(ext)s"
 
 def is_ffmpeg_installed() -> bool:
-    """Проверяет, доступен ли ffmpeg в системном PATH."""
+    """
+    Проверяет, доступна ли утилита ffmpeg в системной переменной PATH.
+
+    Returns:
+        bool: True, если ffmpeg найден, иначе False.
+    """
     return shutil.which("ffmpeg") is not None
 
 
@@ -19,6 +24,23 @@ def download_video(
         proxy: str | None = None,
         filename_template: str | None = None,
 ) -> dict:
+    """
+    Скачивает видео с указанного URL с помощью yt-dlp.
+
+    Args:
+        url (str): URL видео для скачивания.
+        download_dir (Path): Директория для сохранения скачанного файла.
+        quality_format (str | None): Строка формата качества для yt-dlp
+            (например, 'bestvideo+bestaudio/best').
+        proxy (str | None): URL прокси-сервера для использования.
+        filename_template (str | None): Шаблон для имени выходного файла,
+            использующий плейсхолдеры yt-dlp.
+
+    Returns:
+        dict: Словарь с результатом операции.
+              В случае успеха: {'status': 'успех', 'url': str, 'path': Path}.
+              В случае ошибки: {'status': 'ошибка', 'url': str, 'error': str}.
+    """
     logger.info(f"Начало скачивания: {url}")
     try:
         final_template = filename_template or DEFAULT_FILENAME_TEMPLATE

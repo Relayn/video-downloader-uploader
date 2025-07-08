@@ -1,9 +1,8 @@
 import logging
 import pytest
 from unittest.mock import patch, MagicMock
-
-# Тестируемый модуль
 from src.logger import setup_logger, set_logger_level
+from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -11,7 +10,7 @@ def cleanup_loggers():
     """Фикстура для очистки логгеров после каждого теста."""
     yield
     # Удаляем все обработчики из всех логгеров, чтобы тесты не влияли друг на друга
-    for name in list(logging.root.manager.loggerDict):
+    for name in logging.root.manager.loggerDict:
         if name.startswith("test_"):
             logging.getLogger(name).handlers.clear()
 
@@ -31,7 +30,7 @@ def test_setup_logger_stdout_only():
 def test_setup_logger_with_file_logging(tmp_path):
     """Тест: логгер корректно настраивает логирование в файл."""
     log_file = tmp_path / "test.log"
-    logger = setup_logger("test_file", to_file=True, file_path=str(log_file))
+    logger = setup_logger("test_file", to_file=True, file_path=log_file)
 
     assert len(logger.handlers) == 2
     file_handler = logger.handlers[1]
@@ -50,7 +49,7 @@ def test_setup_logger_creates_log_directory(tmp_path):
     log_file = log_dir / "app.log"
 
     assert not log_dir.exists()
-    setup_logger("test_dir_creation", to_file=True, file_path=str(log_file))
+    setup_logger("test_dir_creation", to_file=True, file_path=log_file)
     assert log_dir.exists()
     assert log_dir.is_dir()
 
@@ -59,17 +58,18 @@ def test_setup_logger_creates_log_directory(tmp_path):
 def test_setup_logger_handles_io_error_on_file_creation(mock_handler, capsys):
     """Тест: обработка ошибки IOError при создании файлового обработчика."""
     mock_handler.side_effect = IOError("Permission denied")
+    from pathlib import Path
+    log_path = Path("/protected/path.log")
 
     # Используем patch на print, чтобы проверить вывод в консоль
     with patch("builtins.print") as mock_print:
-        logger = setup_logger("test_io_error", to_file=True, file_path="/protected/path.log")
+        logger = setup_logger("test_io_error", to_file=True, file_path=log_path)
 
         # Логгер должен быть создан, но только с одним (консольным) обработчиком
         assert len(logger.handlers) == 1
         # Проверяем, что было вызвано логирование критической ошибки
-        mock_print.assert_called_with(
-            "CRITICAL: Не удалось создать файловый логгер для '/protected/path.log': Permission denied"
-        )
+        expected_message = f"CRITICAL: Не удалось создать файловый логгер для '{log_path}': Permission denied"
+        mock_print.assert_called_with(expected_message)
 
 
 def test_setup_logger_clears_existing_handlers():

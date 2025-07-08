@@ -1,11 +1,10 @@
 import pytest
 from unittest.mock import patch, MagicMock
-
 from PySide6.QtWidgets import QApplication, QPushButton
 from PySide6.QtCore import Qt
-
 from src.config import AppSettings
 from src.settings_dialog import SettingsDialog
+from pathlib import Path
 
 
 @pytest.fixture(scope="session")
@@ -47,7 +46,7 @@ def test_settings_dialog_loads_settings_correctly(qapp, qtbot, mock_config):
     assert dialog.proxy_url_edit.text() == "http://proxy.test"
     assert dialog.log_level_combo.currentText() == "DEBUG"
     assert dialog.log_to_file_check.isChecked() is True
-    assert dialog.log_file_path_edit.text() == "/logs/app.log"
+    assert Path(dialog.log_file_path_edit.text()) == Path("/logs/app.log")
 
 
 def test_settings_dialog_gathers_settings_data_correctly(qapp, qtbot, mock_config):

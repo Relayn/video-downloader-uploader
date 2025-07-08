@@ -5,11 +5,24 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 
-def setup_logger(name: str, level: str = "INFO", to_file: bool = False, file_path: Optional[str] = None,
+def setup_logger(name: str, level: str = "INFO", to_file: bool = False, file_path: Optional[Path] = None,
                  max_bytes: int = 5 * 1024 * 1024, backup_count: int = 3) -> logging.Logger:
     """
-    Настраивает логгер с выводом в stdout и/или файл с поддержкой ротации,
-    расширенного форматирования и динамического изменения уровня логирования.
+    Настраивает и возвращает логгер с заданными параметрами.
+
+    Очищает существующие обработчики для предотвращения дублирования.
+    Поддерживает вывод в stdout и/или в ротируемый файл.
+
+    Args:
+        name (str): Имя логгера.
+        level (str): Уровень логирования (например, "INFO", "DEBUG").
+        to_file (bool): Если True, логи будут записываться в файл.
+        file_path (Optional[Path]): Путь к файлу логов. Обязателен, если to_file=True.
+        max_bytes (int): Максимальный размер файла лога в байтах перед ротацией.
+        backup_count (int): Количество хранимых архивных файлов лога.
+
+    Returns:
+        logging.Logger: Настроенный экземпляр логгера.
     """
     logger = logging.getLogger(name)
     if logger.hasHandlers():
@@ -23,7 +36,7 @@ def setup_logger(name: str, level: str = "INFO", to_file: bool = False, file_pat
 
     if to_file and file_path:
         try:
-            log_dir = Path(file_path).parent
+            log_dir = file_path.parent
             log_dir.mkdir(parents=True, exist_ok=True)
 
             file_handler = RotatingFileHandler(file_path, maxBytes=max_bytes, backupCount=backup_count,
@@ -41,6 +54,12 @@ def setup_logger(name: str, level: str = "INFO", to_file: bool = False, file_pat
 
 
 def set_logger_level(name: str, level: str):
-    """Динамически меняет уровень логирования для указанного логгера."""
+    """
+    Динамически изменяет уровень логирования для указанного логгера.
+
+    Args:
+        name (str): Имя логгера, уровень которого нужно изменить.
+        level (str): Новый уровень логирования (например, "INFO", "DEBUG").
+    """
     logger = logging.getLogger(name)
     logger.setLevel(getattr(logging, level.upper(), logging.INFO))
